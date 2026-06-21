@@ -2,6 +2,8 @@ package model.rider
 
 import com.jetbrains.rd.generator.nova.*
 import com.jetbrains.rd.generator.nova.PredefinedType.*
+import com.jetbrains.rd.generator.nova.csharp.CSharp50Generator
+import com.jetbrains.rd.generator.nova.kotlin.Kotlin11Generator
 import com.jetbrains.rider.model.nova.ide.SolutionModel
 
 // ---------------------------------------------------------------------------
@@ -15,9 +17,8 @@ import com.jetbrains.rider.model.nova.ide.SolutionModel
 // sides, so add only what the MCP tools actually surface.
 // ---------------------------------------------------------------------------
 
-@Suppress("unused")
-object RiderMcpRoot : Root()
-
+// The Ext attaches to the existing Rider Solution model (root IdeRoot, declared
+// in rider-model.jar); rdgen generates only this extension, not the whole model.
 @Suppress("unused")
 object RiderMcpModel : Ext(SolutionModel.Solution) {
 
@@ -34,7 +35,7 @@ object RiderMcpModel : Ext(SolutionModel.Solution) {
         setting(CSharp50Generator.Namespace, "RiderMcp.Model")
 
         // Frontend -> backend: ask for a status snapshot.
-        call("getBackendStatus", void, BackendStatus.asNullable)
+        call("getBackendStatus", void, BackendStatus.nullable)
 
         // Backend -> frontend: pushed whenever backend readiness changes, so the
         // MCP layer can reflect liveness without polling.

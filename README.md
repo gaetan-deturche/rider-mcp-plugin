@@ -57,37 +57,36 @@ property `-Drider.mcp.port=<n>`).
 
 ## Build & run
 
-Prerequisites: **JDK 21** (the IntelliJ Platform Gradle Plugin provisions the
-JBR for the sandbox), and the **.NET SDK** (`dotnet`) for the backend.
+Prerequisites:
+- **JDK 21** to *run Gradle* — Gradle 8.13 cannot run on JDK 25+. The Rider SDK
+  itself is fetched as a dependency (`rider(..., useInstaller = false)` pulls
+  the SDK distribution, which ships `lib/rd/rider-model.jar`).
+- **.NET SDK 8** (`dotnet`) for the backend.
 
 ```bash
 ./gradlew :protocol:rdgen      # generate the shared RD models (Kotlin + C#)
 ./gradlew buildReSharperHost   # compile the .NET backend (needs `dotnet`)
 ./gradlew runIde               # launch a sandbox Rider with the plugin
-./gradlew buildPlugin          # produce a distributable .zip
+./gradlew buildPlugin          # produce a distributable .zip (bundles the
+                               # backend dll under <plugin>/dotnet/)
 ```
+
+A full `buildPlugin` has been verified end-to-end locally (frontend Kotlin +
+.NET backend compile; the 0.1.0 zip assembles with the backend dll bundled).
 
 ## Status / TODO
 
-The Gradle build scripts are **config-validated** (`./gradlew tasks` succeeds);
-CI (`bitbucket-pipelines.yml`) runs the real source compile on every push.
-Note: Gradle 8.13 can't run on JDK 25 — use JDK 21 locally (CI uses temurin 21).
+The full build compiles locally and CI (`bitbucket-pipelines.yml`) runs it on
+every push.
 
-Window-content tools and the RD diagnostics path are implemented; remaining
-work is version pinning and verifying a few platform API call sites:
-
+- [x] Gradle build + rdgen model generation (Kotlin + C#).
+- [x] Frontend Kotlin compiles against the Rider SDK.
+- [x] .NET backend compiles (`RiderMcp.dll`); `buildPlugin` bundles it.
 - [x] Window-content tools (`WindowContentTools.kt`): `list_tool_windows`,
       `read_tool_window`, `list_processes`, `read_process_output`.
 - [x] RD diagnostics: backend `GetBackendStatus` handler + frontend
       `DebugDataProvider` (EDT/protocol-scheduler aware) → `backend_status` tool.
+- [ ] Register the backend `RiderMcpHost` so Rider loads it, and confirm the
+      protocol binds at runtime (`runIde`).
 - [ ] Verify the Swing text-extraction against real Build/Debug views — some
       consoles wrap editors in ways the component walk may need to special-case.
-- [ ] Pin exact versions: MCP Kotlin SDK, Ktor, Rider SDK, rd — see
-      `gradle.properties` / `build.gradle.kts`. Verify the version-sensitive
-      frontend calls (`startSuspending`, `solution.riderMcpModel`,
-      `RunContentManager`/`EditorComponentImpl`) and the backend
-      `GetProtocolSolution()` namespace compile against them.
-
-> Nothing here can be compiled until `./gradlew :protocol:rdgen` generates the
-> shared model types — the handler code references those generated symbols by
-> design.

@@ -1,5 +1,6 @@
 # Gradle / IntelliJ build
 .gradle/
+.intellijPlatform/
 build/
 **/build/
 !gradle/wrapper/gradle-wrapper.jar

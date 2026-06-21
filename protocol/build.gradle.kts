@@ -21,6 +21,10 @@ repositories {
 
 dependencies {
     implementation("com.jetbrains.rd:rd-gen:$rdVersion")
+    // stdlib is needed here because the root disables the default stdlib dep.
+    implementation(kotlin("stdlib"))
+    // Rider RD model (SolutionModel) exposed by the root project's SDK.
+    implementation(project(mapOf("path" to ":", "configuration" to "riderModel")))
 }
 
 val ktOutput = layout.projectDirectory.dir("../src/rider/main/kotlin/dev/ridermcp/model")
@@ -33,7 +37,7 @@ rdgen {
     generator {
         language = "kotlin"
         transform = "asis"
-        root = "model.rider.RiderMcpRoot"
+        root = "com.jetbrains.rider.model.nova.ide.IdeRoot"
         namespace = "dev.ridermcp.model"
         directory = ktOutput.asFile.absolutePath
     }
@@ -41,7 +45,7 @@ rdgen {
     generator {
         language = "csharp"
         transform = "reversed"
-        root = "model.rider.RiderMcpRoot"
+        root = "com.jetbrains.rider.model.nova.ide.IdeRoot"
         namespace = "RiderMcp.Model"
         directory = csOutput.asFile.absolutePath
     }
