@@ -1,14 +1,14 @@
 # Bitbucket Pipelines — compiles the dual-part plugin on every push.
 #
-# The frontend needs JDK 21 (base image) and the backend needs the .NET SDK
-# (installed below). `buildPlugin` triggers the whole chain:
+# The frontend needs JDK 25 (base image; Rider 2026.1 runs on JBR 25, Gradle 9.6)
+# and the backend needs the .NET SDK (installed below). `buildPlugin` triggers:
 #   compileKotlin -> :protocol:rdgen (generates the shared RD models)
 #   buildPlugin   -> buildReSharperHost (dotnet build) + frontend jar + zip
 #
 # First run downloads the Rider SDK (multi-GB) into the Gradle cache; the
 # cache makes subsequent runs much faster.
 
-image: eclipse-temurin:21-jdk
+image: eclipse-temurin:25-jdk
 
 definitions:
   steps:

@@ -58,9 +58,10 @@ property `-Drider.mcp.port=<n>`).
 ## Build & run
 
 Prerequisites:
-- **JDK 21** to *run Gradle* — Gradle 8.13 cannot run on JDK 25+. The Rider SDK
-  itself is fetched as a dependency (`rider(..., useInstaller = false)` pulls
-  the SDK distribution, which ships `lib/rd/rider-model.jar`).
+- **A full JDK 25** (Gradle 9.6 + the `jvmToolchain(25)`; Rider 2026.1 runs on
+  JBR 25). Note a *JRE* 25 isn't enough — the toolchain needs `javac`. The Rider
+  SDK itself is fetched as a dependency (`rider(...) { useInstaller = false }`
+  pulls the SDK distribution, which ships `lib/rd/rider-model.jar`).
 - **.NET SDK 8** (`dotnet`) for the backend.
 
 ```bash

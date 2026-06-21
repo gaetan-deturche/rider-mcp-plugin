@@ -12,7 +12,7 @@ plugins {
     id("com.jetbrains.rdgen")
 }
 
-val rdVersion: String by project
+val rdVersion = project.property("rdVersion") as String
 
 repositories {
     mavenCentral()

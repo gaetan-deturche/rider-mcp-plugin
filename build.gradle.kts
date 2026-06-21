@@ -12,12 +12,12 @@ plugins {
     id("org.jetbrains.intellij.platform")
 }
 
-val pluginGroup: String by project
-val pluginVersion: String by project
-val platformType: String by project
-val platformVersion: String by project
-val buildConfiguration: String by project
-val mcpServerPort: String by project
+val pluginGroup = project.property("pluginGroup") as String
+val pluginVersion = project.property("pluginVersion") as String
+val platformType = project.property("platformType") as String
+val platformVersion = project.property("platformVersion") as String
+val buildConfiguration = project.property("buildConfiguration") as String
+val mcpServerPort = project.property("mcpServerPort") as String
 
 group = pluginGroup
 version = pluginVersion
@@ -30,7 +30,7 @@ repositories {
 // Expose the Rider RD model jar from the downloaded SDK so the :protocol module
 // can compile its model against SolutionModel. The path is resolved lazily,
 // once the IntelliJ Platform has been initialized (SDK extracted).
-val riderModel: Configuration by configurations.creating {
+val riderModel = configurations.create("riderModel") {
     isCanBeConsumed = true
     isCanBeResolved = false
 }
@@ -50,7 +50,9 @@ dependencies {
         // useInstaller = false pulls the Rider SDK distribution (from the
         // intellij-repository), which ships lib/rd/rider-model.jar — the
         // installer (end-user IDE) does not.
-        rider(platformVersion, useInstaller = false)
+        rider(platformVersion) {
+            useInstaller = false
+        }
         jetbrainsRuntime()
         // Solution protocol access (com.jetbrains.rider.projectView.solution) and
         // rd platform coroutines (startSuspending) live in core product jars,
@@ -111,8 +113,8 @@ configurations.named("implementation") {
 intellijPlatform {
     pluginConfiguration {
         name = "rider-mcp-plugin"
-        val pluginSinceBuild: String by project
-        val pluginUntilBuild: String by project
+        val pluginSinceBuild = project.property("pluginSinceBuild") as String
+        val pluginUntilBuild = project.property("pluginUntilBuild") as String
         ideaVersion {
             sinceBuild = pluginSinceBuild
             untilBuild = pluginUntilBuild
@@ -128,7 +130,7 @@ intellijPlatform {
 val resharperPluginPath = layout.projectDirectory.dir("ReSharperPlugin")
 val dotnetSolution = resharperPluginPath.file("RiderMcp.sln")
 
-val buildReSharperHost by tasks.registering(Exec::class) {
+val buildReSharperHost = tasks.register<Exec>("buildReSharperHost") {
     group = "rider"
     description = "Builds the .NET (ReSharper) backend of the plugin."
     workingDir = resharperPluginPath.asFile
@@ -170,7 +172,9 @@ sourceSets {
 }
 
 kotlin {
-    jvmToolchain(21)
+    // Rider 2026.1 runs on JBR 25, so we can build with JDK 25 and drop the
+    // separate JDK 21 the older Gradle required.
+    jvmToolchain(25)
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
