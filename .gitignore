@@ -1,0 +1,21 @@
+# Gradle / IntelliJ build
+.gradle/
+build/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+.idea/
+*.iml
+out/
+
+# rdgen-generated sources (regenerated from :protocol on build)
+src/rider/main/kotlin/dev/ridermcp/model/
+ReSharperPlugin/RiderMcp/Model/
+
+# .NET
+bin/
+obj/
+*.user
+
+# OS / misc
+.DS_Store
+*.log

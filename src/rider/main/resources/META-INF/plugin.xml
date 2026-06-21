@@ -1,0 +1,35 @@
+<idea-plugin>
+    <id>dev.ridermcp</id>
+    <name>Rider MCP</name>
+    <vendor>gaetan</vendor>
+
+    <description><![CDATA[
+        Exposes Rider IDE interface and debug data to MCP clients over a local
+        HTTP/SSE endpoint. Dual-part plugin: a Kotlin frontend hosts the MCP
+        server; a .NET (ReSharper) backend supplies symbol/solution data over
+        the RD protocol.
+    ]]></description>
+
+    <!-- Rider == IntelliJ platform + .NET backend -->
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.rider</depends>
+
+    <extensions defaultExtensionId="com.intellij">
+        <!-- Application-level service owning the MCP HTTP server lifecycle. -->
+        <applicationService
+            serviceImplementation="dev.ridermcp.McpServerService"/>
+
+        <!-- Project-level bridge to the backend model + debug data. -->
+        <projectService
+            serviceImplementation="dev.ridermcp.tools.DebugDataProvider"/>
+    </extensions>
+
+    <applicationListeners>
+        <!-- Starts/stops the MCP server with the IDE lifecycle. -->
+    </applicationListeners>
+
+    <extensions defaultExtensionId="com.intellij">
+        <postStartupActivity
+            implementation="dev.ridermcp.McpServerStartup"/>
+    </extensions>
+</idea-plugin>
