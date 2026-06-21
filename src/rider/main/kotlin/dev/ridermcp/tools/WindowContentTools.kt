@@ -5,10 +5,9 @@ import com.intellij.execution.ui.RunContentManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.editor.impl.EditorComponentImpl
 import com.intellij.openapi.wm.ToolWindowManager
-import io.modelcontextprotocol.kotlin.sdk.CallToolResult
-import io.modelcontextprotocol.kotlin.sdk.TextContent
-import io.modelcontextprotocol.kotlin.sdk.Tool
 import io.modelcontextprotocol.kotlin.sdk.server.Server
+import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
+import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.buildJsonObject
@@ -45,7 +44,7 @@ object WindowContentTools {
             description = "Lists Rider tool windows (Build, Debug, Run, Problems View, " +
                 "Terminal, Version Control, …) with visibility and tab count. Use the " +
                 "ids here with read_tool_window.",
-            inputSchema = Tool.Input(properties = solutionOnlyProps()),
+            inputSchema = toolSchema(properties = solutionOnlyProps()),
         ) { request ->
             val project = resolveProject(request.arguments.stringArg("solution"))
                 ?: return@addTool noSolution()
@@ -71,7 +70,7 @@ object WindowContentTools {
             description = "Reads the text content currently shown in a tool window " +
                 "(e.g. id='Build' for build output, 'Problems View', 'Version Control'). " +
                 "Defaults to the trailing portion; page with offset/count (lines).",
-            inputSchema = Tool.Input(
+            inputSchema = toolSchema(
                 properties = buildJsonObject {
                     put("id", strProp("Tool window id, as reported by list_tool_windows."))
                     put("tab", numProp("Optional: content tab index (defaults to the selected tab)."))
@@ -114,7 +113,7 @@ object WindowContentTools {
             name = "list_processes",
             description = "Lists run/debug processes and their consoles (each is a tab in " +
                 "the Run/Debug tool window). Use the index with read_process_output.",
-            inputSchema = Tool.Input(properties = solutionOnlyProps()),
+            inputSchema = toolSchema(properties = solutionOnlyProps()),
         ) { request ->
             val project = resolveProject(request.arguments.stringArg("solution"))
                 ?: return@addTool noSolution()
@@ -136,7 +135,7 @@ object WindowContentTools {
             description = "Reads the console output of a run/debug process (the debug " +
                 "process log / program output). Selects by index, then by name match, " +
                 "else the currently selected process. Page with offset/count (lines).",
-            inputSchema = Tool.Input(
+            inputSchema = toolSchema(
                 properties = buildJsonObject {
                     put("index", numProp("Optional: process index from list_processes."))
                     put("name", strProp("Optional: substring match against the process display name."))
@@ -213,7 +212,7 @@ object WindowContentTools {
      * A `[lines X–Y of N]` header is prefixed when windowing, so the client can
      * page (request offset=Y next, etc.).
      */
-    private fun window(text: String, args: kotlinx.serialization.json.JsonObject): String {
+    private fun window(text: String, args: kotlinx.serialization.json.JsonObject?): String {
         val offset = args.intArg("offset")
         val count = args.intArg("count")
         val maxChars = args.intArg("maxChars") ?: DEFAULT_MAX_CHARS

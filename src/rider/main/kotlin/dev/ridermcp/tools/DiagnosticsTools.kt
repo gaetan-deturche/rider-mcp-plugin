@@ -1,10 +1,9 @@
 package dev.ridermcp.tools
 
 import com.intellij.openapi.components.service
-import io.modelcontextprotocol.kotlin.sdk.CallToolResult
-import io.modelcontextprotocol.kotlin.sdk.TextContent
-import io.modelcontextprotocol.kotlin.sdk.Tool
 import io.modelcontextprotocol.kotlin.sdk.server.Server
+import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
+import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -20,7 +19,7 @@ object DiagnosticsTools {
             name = "backend_status",
             description = "Returns a diagnostic snapshot from the .NET backend " +
                 "(solution name, project count, backend version, readiness).",
-            inputSchema = Tool.Input(
+            inputSchema = toolSchema(
                 properties = buildJsonObject {
                     put("solution", buildJsonObject {
                         put("type", "string")

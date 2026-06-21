@@ -63,15 +63,27 @@ dependencies {
     // jar would drag rd-gen + kotlin-compiler-embeddable into the plugin.
 
     // --- MCP server (HTTP / SSE transport) ---------------------------------
-    // Official MCP Kotlin SDK. Pin to a version that matches your Ktor line;
-    // verify the latest at https://github.com/modelcontextprotocol/kotlin-sdk
-    implementation("io.modelcontextprotocol:kotlin-sdk:0.4.0")
+    // Official MCP Kotlin SDK. Must use the same Ktor MAJOR.MINOR as the IDE
+    // bundles (Rider 2026.1 ships Ktor 3.4.x as platform modules that win at
+    // runtime). SDK 0.13.0 targets Ktor 3.4.3 ≈ the platform's 3.4.1.
+    implementation("io.modelcontextprotocol:kotlin-sdk:0.13.0")
 
-    // Embedded HTTP server for the SSE / streamable-HTTP MCP endpoint.
-    implementation("io.ktor:ktor-server-cio:3.0.3")
-    implementation("io.ktor:ktor-server-sse:3.0.3")
-    implementation("io.ktor:ktor-server-content-negotiation:3.0.3")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.3")
+    // Embedded HTTP server for the SSE MCP endpoint. Pinned to 3.4.1 to match
+    // the Ktor that Rider 2026.1 bundles as platform library modules — the
+    // platform's copy is what loads at runtime, so our bytecode must target the
+    // same version (3.0.x gave NoSuchMethodError on embeddedServer).
+    implementation("io.ktor:ktor-server-cio:3.4.1")
+    implementation("io.ktor:ktor-server-sse:3.4.1")
+    implementation("io.ktor:ktor-server-content-negotiation:3.4.1")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.4.1")
+}
+
+// Force every (incl. transitive, e.g. from the MCP SDK) io.ktor module to the
+// platform's 3.4.1 so there's a single, consistent Ktor on the classpath.
+configurations.all {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "io.ktor") useVersion("3.4.1")
+    }
 }
 
 // The IDE provides Kotlin stdlib/reflect and kotlinx-coroutines. Bundling our

@@ -74,6 +74,33 @@ Prerequisites:
 A full `buildPlugin` has been verified end-to-end locally (frontend Kotlin +
 .NET backend compile; the 0.1.0 zip assembles with the backend dll bundled).
 
+## Updating to a new Rider version
+
+Rider bundles Kotlin, kotlinx-coroutines and **Ktor** as platform modules that
+win on the plugin classpath at runtime. The cardinal rule: **match the plugin's
+Kotlin and Ktor (and therefore the MCP SDK) to whatever the target Rider ships**,
+or you get `NoSuchMethodError` / classloader-constraint crashes at runtime even
+though it compiles.
+
+1. **Find the target build + bundled versions.** From an installed Rider
+   `<rider>/`:
+   - build number: `product-info.json` → `buildNumber` (e.g. `RD-261.25134.178` → branch `261`)
+   - bundled Ktor: `unzip -p lib/intellij.libraries.ktor.io.jar META-INF/MANIFEST.MF | grep Implementation-Version`
+   - bundled Kotlin: the `rider-model.jar` metadata version (a build error will also tell you: "metadata version is X").
+2. **`gradle.properties`** — `platformVersion`, `rdVersion` → the Rider version;
+   `pluginSinceBuild`/`pluginUntilBuild` → the new branch (e.g. `261` / `261.*`).
+3. **`settings.gradle.kts`** — `org.jetbrains.kotlin.jvm` version → the IDE's
+   Kotlin line; `rd-gen` `useModule` version → match `rdVersion`.
+4. **`build.gradle.kts`** — `io.ktor:*` versions and the `eachDependency`
+   force → the IDE's Ktor MAJOR.MINOR; `io.modelcontextprotocol:kotlin-sdk` →
+   a release that targets that same Ktor MAJOR.MINOR (check its POM/module).
+5. **`ReSharperPlugin/RiderMcp/RiderMcp.csproj`** — `JetBrains.Rider.SDK` → the
+   Rider version wave (e.g. `2026.1.*`).
+6. Rebuild: `./gradlew clean buildPlugin`. Fix any API breaks the version jump
+   surfaces (the MCP SDK in particular relocates/renames types between releases).
+
+Reference: the 243 → 261 migration commit shows the exact set of changes.
+
 ## Status / TODO
 
 The full build compiles locally and CI (`bitbucket-pipelines.yml`) runs it on

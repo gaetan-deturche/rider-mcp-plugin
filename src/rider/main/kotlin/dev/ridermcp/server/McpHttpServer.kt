@@ -6,11 +6,11 @@ import dev.ridermcp.tools.WindowContentTools
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.engine.EmbeddedServer
-import io.modelcontextprotocol.kotlin.sdk.Implementation
-import io.modelcontextprotocol.kotlin.sdk.ServerCapabilities
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.server.ServerOptions
 import io.modelcontextprotocol.kotlin.sdk.server.mcp
+import io.modelcontextprotocol.kotlin.sdk.types.Implementation
+import io.modelcontextprotocol.kotlin.sdk.types.ServerCapabilities
 
 /**
  * Embeds a Ktor server that speaks MCP over SSE. MCP clients (e.g. Claude
@@ -27,8 +27,8 @@ class McpHttpServer(private val port: Int) {
 
     fun start() {
         engine = embeddedServer(CIO, host = "127.0.0.1", port = port) {
-            // mcp { } installs the SSE plugin itself and wires the /sse + /message
-            // routes; installing SSE here too causes a DuplicatePluginException.
+            // mcp { } wires the SSE routes; the factory is invoked per SSE
+            // session (the session arg is unused — one Server per connection).
             mcp { buildServer() }
         }.also { it.start(wait = false) }
         log.info("MCP SSE endpoint listening on http://127.0.0.1:$port/sse")
