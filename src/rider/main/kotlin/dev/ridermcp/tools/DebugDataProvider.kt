@@ -1,29 +1,66 @@
 package dev.ridermcp.tools
 
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
-import com.jetbrains.rd.platform.util.idea.ProtocolSubscribedProjectComponent
-import com.jetbrains.rdclient.protocol.IProtocolHost
+import com.jetbrains.rd.platform.util.startSuspending
+import com.jetbrains.rd.util.lifetime.LifetimeDefinition
+import com.jetbrains.rider.projectView.solution
+import dev.ridermcp.model.BackendStatus
+import dev.ridermcp.model.RiderMcpModel
+import dev.ridermcp.model.SymbolInfo
+import dev.ridermcp.model.riderMcpModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
- * Project-scoped bridge to the .NET backend over the RD protocol. The MCP tools
- * call into this to fetch backend-resolved data (symbols, solution status).
+ * Project-scoped bridge to the .NET backend over the RD protocol.
  *
- * NOTE: the generated RD model (`RiderMcpModel`) is produced by `:protocol`
- * rdgen at build time. Once generated, obtain it via the solution protocol and
- * expose typed accessors here, e.g.:
+ * The generated model accessor (`solution.riderMcpModel`) and the call/struct
+ * types (`RiderMcpModel`, `BackendStatus`, `SymbolInfo`) are produced by
+ * `:protocol`'s rdgen at build time — they only resolve after
+ * `./gradlew :protocol:rdgen` has run.
  *
- *     val model = project.solution.riderMcpModel
- *     model.getBackendStatus.startSuspending(lifetime, Unit)
+ * RD calls must be issued on the protocol scheduler, which in the frontend is
+ * the EDT; [callBackend] enforces that and suspends until the backend replies.
  */
 @Service(Service.Level.PROJECT)
-class DebugDataProvider(private val project: Project) {
+class DebugDataProvider(private val project: Project) : Disposable {
 
-    /** True once the backend RD protocol is connected for this solution. */
-    fun isBackendConnected(): Boolean =
-        runCatching { IProtocolHost.Companion != null }.getOrDefault(false)
+    private val log = logger<DebugDataProvider>()
 
-    // TODO: implement once generated model is available:
-    //   suspend fun backendStatus(): BackendStatus?
-    //   suspend fun findSymbols(query: String): List<SymbolInfo>
+    // Tied to service disposal so in-flight RD calls are cancelled on shutdown.
+    private val lifetimeDef = LifetimeDefinition()
+
+    /** Diagnostic snapshot from the backend, or null if it isn't connected. */
+    suspend fun backendStatus(): BackendStatus? = callBackend { model ->
+        model.getBackendStatus.startSuspending(lifetimeDef.lifetime, Unit)
+    }
+
+    /** Symbols resolved by the backend for [query]; empty if backend absent. */
+    suspend fun findSymbols(query: String): List<SymbolInfo> =
+        callBackend { model -> model.findSymbols.startSuspending(lifetimeDef.lifetime, query) }
+            ?: emptyList()
+
+    /**
+     * Switches to the protocol scheduler (EDT), resolves the bound model for
+     * this solution, and runs [block]. Returns null when the solution has no
+     * RiderMcp model bound yet (backend still starting / not a Rider solution).
+     */
+    private suspend fun <T> callBackend(block: suspend (RiderMcpModel) -> T): T? =
+        withContext(Dispatchers.EDT) {
+            val model = runCatching { project.solution.riderMcpModel }.getOrNull()
+            if (model == null) {
+                log.warn("RiderMcp backend model not bound for '${project.name}'")
+                null
+            } else {
+                block(model)
+            }
+        }
+
+    override fun dispose() {
+        lifetimeDef.terminate()
+    }
 }

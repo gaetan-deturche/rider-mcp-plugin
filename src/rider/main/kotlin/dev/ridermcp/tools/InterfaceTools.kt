@@ -1,22 +1,17 @@
 package dev.ridermcp.tools
 
+import com.intellij.openapi.components.service
 import com.intellij.openapi.project.ProjectManager
 import io.modelcontextprotocol.kotlin.sdk.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.TextContent
 import io.modelcontextprotocol.kotlin.sdk.Tool
 import io.modelcontextprotocol.kotlin.sdk.server.Server
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.add
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * MCP tools that expose IDE *interface* data: open solutions, tool windows,
- * editor selection, and (via the backend RD model) resolved symbols.
- *
- * These run on a pooled thread when a client calls them; use ReadAction /
- * EDT dispatch where the platform APIs require it.
+ * MCP tools that expose IDE *interface* data: open solutions and symbols
+ * resolved by the .NET backend over RD ([DebugDataProvider]).
  */
 object InterfaceTools {
 
@@ -27,9 +22,7 @@ object InterfaceTools {
             inputSchema = Tool.Input(properties = buildJsonObject {}),
         ) { _ ->
             val names = ProjectManager.getInstance().openProjects.map { it.name }
-            CallToolResult(
-                content = listOf(TextContent(names.joinToString("\n").ifEmpty { "(none)" })),
-            )
+            CallToolResult(content = listOf(TextContent(names.joinToString("\n").ifEmpty { "(none)" })))
         }
 
         server.addTool(
@@ -42,19 +35,26 @@ object InterfaceTools {
                         put("type", "string")
                         put("description", "Symbol name or pattern to resolve.")
                     })
+                    put("solution", buildJsonObject {
+                        put("type", "string")
+                        put("description", "Optional: target solution name when several are open.")
+                    })
                 },
                 required = listOf("query"),
             ),
         ) { request ->
-            val query = (request.arguments["query"] as? JsonObject)?.toString()
-                ?: request.arguments["query"]?.toString().orEmpty()
-            // TODO: route to RiderMcpModel.findSymbols over RD (see DebugDataProvider).
-            CallToolResult(
-                content = listOf(TextContent("find_symbols('$query') — backend wiring pending")),
-            )
+            val query = request.arguments.stringArg("query").orEmpty()
+            if (query.isBlank()) {
+                return@addTool CallToolResult(content = listOf(TextContent("'query' is required.")))
+            }
+            val project = resolveProject(request.arguments.stringArg("solution"))
+                ?: return@addTool CallToolResult(content = listOf(TextContent("No matching open solution.")))
+
+            val symbols = project.service<DebugDataProvider>().findSymbols(query)
+            val text = symbols.joinToString("\n") { s ->
+                "${s.kind} ${s.fqn}  (${s.file}:${s.line})  ${s.signature}"
+            }.ifEmpty { "No symbols match '$query' in '${project.name}'." }
+            CallToolResult(content = listOf(TextContent(text)))
         }
     }
-
-    @Suppress("unused")
-    private fun sampleArray() = buildJsonArray { add("placeholder") }
 }

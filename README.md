@@ -49,12 +49,20 @@ JBR for the sandbox), and the **.NET SDK** (`dotnet`) for the backend.
 
 ## Status / TODO
 
-This is a scaffold. Wiring left to complete:
+RD plumbing is wired end-to-end; remaining work is version pinning and the
+backend symbol-search body:
 
+- [x] RD handlers registered on the backend (`RiderMcpHost.cs`:
+      `GetBackendStatus`, `FindSymbols`, `BackendReadyChanged`).
+- [x] Frontend RD calls via `DebugDataProvider` (EDT/protocol-scheduler aware).
+- [x] `find_symbols` / `backend_status` MCP tools routed through the RD model.
+- [ ] Fill in `ResolveSymbols` in `RiderMcpHost.cs` against the resolved
+      ReSharper symbol-cache API (reference snippet is in the file).
 - [ ] Pin exact versions: MCP Kotlin SDK, Ktor, Rider SDK, rd — see
-      `gradle.properties` / `build.gradle.kts`.
-- [ ] Generate the wrapper jar once (`gradle wrapper` with a system Gradle, or
-      let the IDE do it) — only the wrapper scripts/properties are committed.
-- [ ] Implement RD handlers on the backend (`RiderMcpHost.cs`) and the typed
-      accessors in `DebugDataProvider.kt`.
-- [ ] Route `find_symbols` / `backend_status` tools through the RD model.
+      `gradle.properties` / `build.gradle.kts`. Verify the version-sensitive
+      frontend calls (`startSuspending`, `solution.riderMcpModel`) and the
+      backend `GetProtocolSolution()` namespace compile against them.
+
+> Nothing here can be compiled until `./gradlew :protocol:rdgen` generates the
+> shared model types — the handler code references those generated symbols by
+> design.
