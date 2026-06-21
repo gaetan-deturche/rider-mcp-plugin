@@ -28,8 +28,9 @@ A dual-part JetBrains **Rider** plugin that exposes IDE **interface** and
 ## MCP surface
 
 The server registers these tools (`src/rider/main/kotlin/dev/ridermcp/tools/`).
-The focus is **tool-window / console content** — things the official Rider MCP
-doesn't already cover (it has symbol/solution lookup, so those were dropped).
+The focus is **tool-window / console content** and **live debug state** — things
+the official Rider MCP doesn't already cover (it has symbol/solution lookup, so
+those were dropped).
 
 **Window content (`WindowContentTools.kt`)** — pure frontend reads:
 
@@ -39,6 +40,25 @@ doesn't already cover (it has symbol/solution lookup, so those were dropped).
 | `read_tool_window` | Text shown in a tool window (`id='Build'` → build output, `'Problems View'`, `'Version Control'`, …) |
 | `list_processes` | Run/debug processes and their consoles |
 | `read_process_output` | Console output of a run/debug process (debug process log / program output) |
+
+**Debugger (`DebuggerTools.kt`)** — live XDebugger state. `list_breakpoints`
+works any time; the rest need a debug session **suspended at a breakpoint**:
+
+| Tool | Purpose |
+|------|---------|
+| `debug_status` | Active debug sessions: name, running/suspended, current `file:line` |
+| `list_threads` | Threads (execution stacks) of the suspended session; marks the active one |
+| `get_call_stack` | Call stack of a thread: each frame's function + `file:line` |
+| `get_local_variables` | Locals/params/fields visible in a frame, with values and types |
+| `evaluate` | Evaluate an expression in a frame (`obj.field`, `list.Count`, …) |
+| `list_breakpoints` | All breakpoints: location, enabled, condition (no session needed) |
+
+`get_local_variables` and `evaluate` take an optional `frame` index (from
+`get_call_stack`) and `thread` index; `evaluate` takes an `expression`. The
+XDebugger read path is async/callback-based, so each call is adapted to a
+coroutine (off the EDT) with a timeout. Raw byte-memory isn't exposed — it's not
+in the public XDebugger API; `evaluate` / `get_local_variables` cover value and
+object/field inspection instead.
 
 **Diagnostics (`DiagnosticsTools.kt`)** — RD-backed:
 
@@ -51,6 +71,13 @@ pulling text from editor and text components. `read_tool_window` and
 `read_process_output` support **line-based pagination**: `offset` (0-based;
 negative counts from the end) and `count`, with a `[lines X–Y of N]` header so
 clients can page. Output is still capped by `maxChars` (default 20k).
+
+**Extraction limitation.** The walk only recognizes IntelliJ editor
+(`EditorComponentImpl`) and `JTextComponent` content — which covers the Build
+output and most run/debug consoles (verified). Windows whose text lives in a
+data model rendered per-row (e.g. `JTree`/`JList`-based test or Problems views)
+or is custom-painted aren't seen by the generic walk and return empty/partial
+text until a type-specific handler is added to `extractText`.
 
 Clients connect to `http://127.0.0.1:6363/sse` (override the port with the JVM
 property `-Drider.mcp.port=<n>`).
