@@ -1,5 +1,5 @@
 # Bitbucket Pipelines — builds the dual-part plugin on tag push (see pipelines
-# section) and publishes the .zip to the repo's Downloads.
+# section) and exposes the .zip as a pipeline artifact.
 #
 # The frontend needs JDK 25 (base image; Rider 2026.1 runs on JBR 25, Gradle 9.6)
 # and the backend needs the .NET SDK (installed below). `buildPlugin` triggers:
@@ -36,26 +36,11 @@ definitions:
           # --- generate RD models, then build the plugin distribution ---
           - ./gradlew --no-daemon --console=plain :protocol:rdgen
           - ./gradlew --no-daemon --console=plain buildPlugin
-          # --- publish the .zip to the repo's Downloads (stable, non-expiring link) ---
-          # Uses an Atlassian API token (app passwords are being removed July 2026).
-          # Create two repo variables (Repository settings -> Repository variables):
-          #   BITBUCKET_API_USER  = the Atlassian account email that owns the workspace
-          #   BITBUCKET_API_TOKEN = a scoped API token (write:repository:bitbucket), secured
-          # Re-uploading the same filename replaces it. The guard lets the build still
-          # succeed (artifact only) if the token isn't configured yet.
-          - |
-            if [ -n "$BITBUCKET_API_TOKEN" ]; then
-              ZIP=$(ls build/distributions/*.zip | head -1)
-              echo "Uploading $ZIP to Downloads..."
-              curl -sS --fail -u "$BITBUCKET_API_USER:$BITBUCKET_API_TOKEN" \
-                "https://api.bitbucket.org/2.0/repositories/$BITBUCKET_REPO_FULL_NAME/downloads" \
-                --form files=@"$ZIP"
-              echo "Uploaded $ZIP to Repository -> Downloads"
-            else
-              echo "BITBUCKET_API_TOKEN not set — skipping Downloads upload (artifact still attached)"
-            fi
+        # The Downloads API needs a paid plan (Free returns HTTP 402), so the
+        # build just exposes the .zip as a pipeline artifact. A tagged release
+        # zip is also committed under dist/ for a stable raw-link download.
         artifacts:
-          - build/distributions/**    # also kept as a per-run pipeline artifact
+          - build/distributions/**    # the publishable plugin .zip (per-run artifact)
 
 pipelines:
   # Build ONLY when a tag is pushed — i.e. when cutting a release. Day-to-day

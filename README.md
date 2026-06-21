@@ -155,7 +155,19 @@ custom: `build`*.
 
 The build step installs .NET 8 and `libicu` (a hard .NET runtime dep the slim
 Temurin image lacks), runs `:protocol:rdgen`, then `buildPlugin`. The publishable
-zip lands in `build/distributions/` (downloadable from the run's *Artifacts*).
+zip lands in `build/distributions/` (downloadable from the run's *Artifacts* —
+note pipeline artifacts expire after 14 days).
+
+**Download a release.** Bitbucket's *Downloads* feature requires a paid plan
+(Free returns HTTP 402), so each tagged release zip is committed under `dist/`
+for a stable raw-link download, e.g.:
+
+```
+https://bitbucket.org/s0m30n3/rider-mcp-plugin/raw/v0.1.0/dist/rider-mcp-plugin-0.1.0.zip
+```
+
+When cutting a release, drop the new `build/distributions/*.zip` into `dist/`,
+commit it, then tag.
 
 ## Status / TODO
 
