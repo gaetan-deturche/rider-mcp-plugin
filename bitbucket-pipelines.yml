@@ -1,0 +1,41 @@
+# Bitbucket Pipelines — compiles the dual-part plugin on every push.
+#
+# The frontend needs JDK 21 (base image) and the backend needs the .NET SDK
+# (installed below). `buildPlugin` triggers the whole chain:
+#   compileKotlin -> :protocol:rdgen (generates the shared RD models)
+#   buildPlugin   -> buildReSharperHost (dotnet build) + frontend jar + zip
+#
+# First run downloads the Rider SDK (multi-GB) into the Gradle cache; the
+# cache makes subsequent runs much faster.
+
+image: eclipse-temurin:21-jdk
+
+definitions:
+  steps:
+    - step: &build
+        name: Build plugin (frontend + .NET backend)
+        size: 2x                      # 8 GB — the Rider SDK build is memory-hungry
+        caches:
+          - gradle                    # ~/.gradle (wrapper, deps, IntelliJ SDK)
+        script:
+          # --- .NET SDK (for the ReSharper backend) ---
+          - apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
+          - curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          - bash /tmp/dotnet-install.sh --channel 8.0 --install-dir /usr/share/dotnet
+          - export DOTNET_ROOT=/usr/share/dotnet
+          - export PATH="$PATH:/usr/share/dotnet"
+          - dotnet --version
+          # --- generate RD models, then build the plugin distribution ---
+          - ./gradlew --no-daemon --console=plain :protocol:rdgen
+          - ./gradlew --no-daemon --console=plain buildPlugin
+        artifacts:
+          - build/distributions/**    # the publishable plugin .zip
+
+pipelines:
+  # Every push to any branch is compiled.
+  default:
+    - step: *build
+  # Keep main explicit too (same build) for clarity in the UI.
+  branches:
+    main:
+      - step: *build

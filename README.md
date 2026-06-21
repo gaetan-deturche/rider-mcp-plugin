@@ -69,6 +69,10 @@ JBR for the sandbox), and the **.NET SDK** (`dotnet`) for the backend.
 
 ## Status / TODO
 
+The Gradle build scripts are **config-validated** (`./gradlew tasks` succeeds);
+CI (`bitbucket-pipelines.yml`) runs the real source compile on every push.
+Note: Gradle 8.13 can't run on JDK 25 — use JDK 21 locally (CI uses temurin 21).
+
 Window-content tools and the RD diagnostics path are implemented; remaining
 work is version pinning and verifying a few platform API call sites:
 

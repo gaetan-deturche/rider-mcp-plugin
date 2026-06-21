@@ -7,9 +7,9 @@ import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 // ---------------------------------------------------------------------------
 
 plugins {
-    kotlin("jvm") version "2.1.0"
-    id("org.jetbrains.intellij.platform") version "2.2.1"
-    id("com.jetbrains.rdgen") version "2024.3.1"
+    // Versions are centralized in settings.gradle.kts (pluginManagement).
+    kotlin("jvm")
+    id("org.jetbrains.intellij.platform")
 }
 
 val pluginGroup: String by project
@@ -51,11 +51,11 @@ dependencies {
 intellijPlatform {
     pluginConfiguration {
         name = "rider-mcp-plugin"
-        val sinceBuild: String by project
-        val untilBuild: String by project
+        val pluginSinceBuild: String by project
+        val pluginUntilBuild: String by project
         ideaVersion {
-            this.sinceBuild = sinceBuild
-            this.untilBuild = untilBuild
+            sinceBuild = pluginSinceBuild
+            untilBuild = pluginUntilBuild
         }
     }
     // Bundle the compiled .NET backend (dotFiles) into the plugin distribution.
