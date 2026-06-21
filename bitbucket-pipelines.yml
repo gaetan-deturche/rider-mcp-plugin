@@ -5,8 +5,9 @@
 #   compileKotlin -> :protocol:rdgen (generates the shared RD models)
 #   buildPlugin   -> buildReSharperHost (dotnet build) + frontend jar + zip
 #
-# First run downloads the Rider SDK (multi-GB) into the Gradle cache; the
-# cache makes subsequent runs much faster.
+# Every run downloads the Rider SDK (multi-GB). It can't be cached on Bitbucket
+# Cloud (the gradle cache is ~6.2 GiB compressed, over the 1 GiB limit), which is
+# why the build is tag-only — see the pipelines section at the bottom.
 
 image: eclipse-temurin:25-jdk
 
@@ -15,8 +16,10 @@ definitions:
     - step: &build
         name: Build plugin (frontend + .NET backend)
         size: 2x                      # 8 GB — the Rider SDK build is memory-hungry
-        caches:
-          - gradle                    # ~/.gradle (wrapper, deps, IntelliJ SDK)
+        # No gradle cache on purpose: ~/.gradle/caches is ~6.2 GiB compressed
+        # (the Rider SDK), far over Bitbucket's 1 GiB cache limit, so it's never
+        # uploaded — and attempting it wastes ~10 min/build compressing then
+        # discarding. We re-download the SDK each run instead (hence tag-only).
         script:
           # --- .NET SDK (for the ReSharper backend) ---
           # libicu is a hard runtime dep of .NET; the minimal Temurin image lacks
