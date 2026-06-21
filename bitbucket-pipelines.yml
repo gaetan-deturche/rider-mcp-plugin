@@ -1,4 +1,5 @@
-# Bitbucket Pipelines — compiles the dual-part plugin on every push.
+# Bitbucket Pipelines — builds the dual-part plugin on tag push (see pipelines
+# section) and publishes the .zip to the repo's Downloads.
 #
 # The frontend needs JDK 25 (base image; Rider 2026.1 runs on JBR 25, Gradle 9.6)
 # and the backend needs the .NET SDK (installed below). `buildPlugin` triggers:
@@ -35,8 +36,24 @@ definitions:
           # --- generate RD models, then build the plugin distribution ---
           - ./gradlew --no-daemon --console=plain :protocol:rdgen
           - ./gradlew --no-daemon --console=plain buildPlugin
+          # --- publish the .zip to the repo's Downloads (stable, non-expiring link) ---
+          # Needs a secured repo variable BITBUCKET_APP_PASSWORD (or API token) with
+          # the 'repository:write' scope; create it in Repository settings ->
+          # Repository variables. Re-uploading the same filename replaces it. The
+          # guard lets the build still succeed (artifact only) if it isn't set yet.
+          - |
+            if [ -n "$BITBUCKET_APP_PASSWORD" ]; then
+              ZIP=$(ls build/distributions/*.zip | head -1)
+              echo "Uploading $ZIP to Downloads..."
+              curl -sS --fail -u "s0m30n3:$BITBUCKET_APP_PASSWORD" \
+                "https://api.bitbucket.org/2.0/repositories/$BITBUCKET_REPO_FULL_NAME/downloads" \
+                --form files=@"$ZIP"
+              echo "Uploaded $ZIP to Repository -> Downloads"
+            else
+              echo "BITBUCKET_APP_PASSWORD not set — skipping Downloads upload (artifact still attached)"
+            fi
         artifacts:
-          - build/distributions/**    # the publishable plugin .zip
+          - build/distributions/**    # also kept as a per-run pipeline artifact
 
 pipelines:
   # Build ONLY when a tag is pushed — i.e. when cutting a release. Day-to-day
