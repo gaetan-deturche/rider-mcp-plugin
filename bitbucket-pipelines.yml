@@ -19,7 +19,11 @@ definitions:
           - gradle                    # ~/.gradle (wrapper, deps, IntelliJ SDK)
         script:
           # --- .NET SDK (for the ReSharper backend) ---
-          - apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
+          # libicu is a hard runtime dep of .NET; the minimal Temurin image lacks
+          # it, so `dotnet` fails to start ("Couldn't find a valid ICU package")
+          # unless we install it. INVARIANT_GLOBALIZATION is a belt-and-suspenders.
+          - apt-get update && apt-get install -y --no-install-recommends curl ca-certificates libicu-dev
+          - export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
           - curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
           - bash /tmp/dotnet-install.sh --channel 8.0 --install-dir /usr/share/dotnet
           - export DOTNET_ROOT=/usr/share/dotnet
