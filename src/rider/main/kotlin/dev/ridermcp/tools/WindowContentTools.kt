@@ -51,11 +51,19 @@ object WindowContentTools {
 
             val text = withContext(Dispatchers.EDT) {
                 val twm = ToolWindowManager.getInstance(project)
+                // Only read visibility/availability — do NOT touch contentManager
+                // here, as that force-initializes every tool window's content,
+                // which can throw (e.g. "Backup and Sync History") and pop a modal
+                // dialog that blocks the EDT.
                 twm.toolWindowIds.sorted().joinToString("\n") { id ->
                     val tw = twm.getToolWindow(id)
-                    val state = if (tw?.isVisible == true) "visible" else "hidden"
-                    val tabs = tw?.contentManager?.contentCount ?: 0
-                    "$id  [$state, $tabs tab(s)]"
+                    val state = when {
+                        tw == null -> "unavailable"
+                        tw.isVisible -> "visible"
+                        tw.isAvailable -> "available"
+                        else -> "hidden"
+                    }
+                    "$id  [$state]"
                 }
             }
             CallToolResult(content = listOf(TextContent(text.ifEmpty { "(no tool windows)" })))

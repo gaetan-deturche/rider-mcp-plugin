@@ -3,9 +3,12 @@ package dev.ridermcp.server
 import com.intellij.openapi.diagnostic.logger
 import dev.ridermcp.tools.DiagnosticsTools
 import dev.ridermcp.tools.WindowContentTools
+import io.ktor.server.application.install
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.engine.EmbeddedServer
+import io.ktor.server.routing.routing
+import io.ktor.server.sse.SSE
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.server.ServerOptions
 import io.modelcontextprotocol.kotlin.sdk.server.mcp
@@ -27,9 +30,14 @@ class McpHttpServer(private val port: Int) {
 
     fun start() {
         engine = embeddedServer(CIO, host = "127.0.0.1", port = port) {
-            // mcp { } wires the SSE routes; the factory is invoked per SSE
-            // session (the session arg is unused — one Server per connection).
-            mcp { buildServer() }
+            // Mount the MCP SSE transport at /sse: GET /sse opens the stream and
+            // the endpoint event points clients to POST /sse?sessionId=…. The
+            // route-based mcp() (unlike Application.mcp()) does NOT install SSE
+            // itself, so install it here first.
+            install(SSE)
+            routing {
+                mcp("/sse") { buildServer() }
+            }
         }.also { it.start(wait = false) }
         log.info("MCP SSE endpoint listening on http://127.0.0.1:$port/sse")
     }

@@ -28,6 +28,12 @@
         <notificationGroup id="RiderMcp" displayType="BALLOON"/>
     </extensions>
 
+    <!-- Primary auto-start: fires on IDE start, no solution needed. -->
+    <applicationListeners>
+        <listener class="dev.ridermcp.McpAppStartup"
+                  topic="com.intellij.ide.AppLifecycleListener"/>
+    </applicationListeners>
+
     <actions>
         <!-- Manual fallback / verification: Tools | Start MCP Server -->
         <action id="dev.ridermcp.StartMcpServer"
