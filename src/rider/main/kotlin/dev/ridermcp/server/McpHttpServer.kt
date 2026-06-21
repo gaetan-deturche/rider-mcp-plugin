@@ -1,6 +1,7 @@
 package dev.ridermcp.server
 
 import com.intellij.openapi.diagnostic.logger
+import dev.ridermcp.tools.DebuggerTools
 import dev.ridermcp.tools.DiagnosticsTools
 import dev.ridermcp.tools.WindowContentTools
 import io.ktor.server.application.install
@@ -52,6 +53,7 @@ class McpHttpServer(private val port: Int) {
             ),
         )
         WindowContentTools.register(server)
+        DebuggerTools.register(server)
         DiagnosticsTools.register(server)
         return server
     }
