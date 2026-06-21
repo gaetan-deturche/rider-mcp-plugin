@@ -26,9 +26,10 @@ namespace RiderMcp
         {
             var model = solution.GetProtocolSolution().GetRiderMcpModel();
 
-            // Frontend -> backend request handler. RdEndpoint.Set expects a
-            // handler returning an RdTask; wrap the synchronous result.
-            model.GetBackendStatus.Set((_, _) => RdTask<BackendStatus>.Successful(BuildStatus(solution)));
+            // Frontend -> backend request handler. SetSync takes a handler that
+            // returns the result directly (no RdTask wrapping); the status is
+            // built synchronously and cheaply.
+            model.GetBackendStatus.SetSync((_, _) => BuildStatus(solution));
 
             // Backend -> frontend liveness signal.
             model.BackendReadyChanged.Fire(true);
