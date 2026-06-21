@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using JetBrains.Application.Parts;
 using JetBrains.Lifetimes;
 using JetBrains.ProjectModel;
@@ -11,10 +8,10 @@ namespace RiderMcp
 {
     /// <summary>
     /// Backend host implementing the RD model declared in :protocol
-    /// (<see cref="RiderMcpModel"/>). It answers requests issued by the Kotlin
-    /// frontend's MCP tools and announces backend readiness.
+    /// (<see cref="RiderMcpModel"/>). It answers the frontend's backend_status
+    /// request and announces backend readiness.
     ///
-    /// The generated types (RiderMcpModel, BackendStatus, SymbolInfo and the
+    /// The generated types (RiderMcpModel, BackendStatus and the
     /// <c>GetRiderMcpModel()</c> accessor) only resolve after rdgen has run, so
     /// the build wires <c>:protocol:rdgen</c> ahead of compilation.
     /// </summary>
@@ -25,11 +22,9 @@ namespace RiderMcp
         {
             var model = solution.GetProtocolSolution().GetRiderMcpModel();
 
-            // Frontend -> backend request handlers. The (lifetime, request)
-            // lambda overload runs synchronously on the protocol thread; switch
-            // to RdTask.Start for work that must go off-thread.
+            // Frontend -> backend request handler. The (lifetime, request)
+            // lambda overload runs synchronously on the protocol thread.
             model.GetBackendStatus.Set((_, _) => BuildStatus(solution));
-            model.FindSymbols.Set((_, query) => ResolveSymbols(solution, query));
 
             // Backend -> frontend liveness signal.
             model.BackendReadyChanged.Fire(true);
@@ -45,37 +40,6 @@ namespace RiderMcp
             // Positional ctor — field order matches the structdef in :protocol:
             // (solutionName, isReady, projectCount, backendVersion).
             return new BackendStatus(name, true, projectCount, version);
-        }
-
-        private static List<SymbolInfo> ResolveSymbols(ISolution solution, string query)
-        {
-            var results = new List<SymbolInfo>();
-            if (string.IsNullOrWhiteSpace(query))
-                return results;
-
-            // ------------------------------------------------------------------
-            // TODO: implement real symbol resolution against ReSharper's symbol
-            // cache. The shape below is the reference; verify the exact API
-            // surface (ISymbolCache / GetSymbolScope / LibrarySymbolScope) against
-            // the JetBrains.Rider.SDK version resolved by the build, then map each
-            // declared element + its primary declaration's source range.
-            //
-            //   var cache = solution.GetComponent<ISymbolCache>();
-            //   var scope = cache.GetSymbolScope(LibrarySymbolScope.FULL, caseSensitive: false);
-            //   foreach (var element in scope.GetElementsByShortName(query))
-            //   {
-            //       var decl = element.GetDeclarations().FirstOrDefault();
-            //       var range = decl?.GetDocumentRange();
-            //       results.Add(new SymbolInfo(
-            //           fqn:       element.GetClrName()?.FullName ?? element.ShortName,
-            //           kind:      element.GetElementType().ToString(),
-            //           file:      range?.Document.Moniker ?? "",
-            //           line:      range?.StartOffset.ToDocumentCoords().Line.Plus1() ?? 0,
-            //           signature: element.ShortName));
-            //   }
-            // ------------------------------------------------------------------
-
-            return results;
         }
     }
 }

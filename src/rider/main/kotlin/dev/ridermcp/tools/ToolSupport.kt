@@ -18,3 +18,7 @@ internal fun resolveProject(name: String?): Project? {
 /** Reads a string-valued argument from an MCP tool request payload. */
 internal fun JsonObject.stringArg(key: String): String? =
     this[key]?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+
+/** Reads an int-valued argument (accepts JSON number or numeric string). */
+internal fun JsonObject.intArg(key: String): Int? =
+    this[key]?.let { runCatching { it.jsonPrimitive.content.toInt() }.getOrNull() }

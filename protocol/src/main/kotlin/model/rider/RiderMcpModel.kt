@@ -29,24 +29,12 @@ object RiderMcpModel : Ext(SolutionModel.Solution) {
         field("backendVersion", string)
     }
 
-    // A single resolved symbol surfaced to MCP "interface" tools.
-    private val SymbolInfo = structdef {
-        field("fqn", string)         // fully-qualified name
-        field("kind", string)        // class / method / property ...
-        field("file", string)
-        field("line", int)
-        field("signature", string)
-    }
-
     init {
         setting(Kotlin11Generator.Namespace, "dev.ridermcp.model")
         setting(CSharp50Generator.Namespace, "RiderMcp.Model")
 
         // Frontend -> backend: ask for a status snapshot.
         call("getBackendStatus", void, BackendStatus.asNullable)
-
-        // Frontend -> backend: resolve symbols matching a query (interface data).
-        call("findSymbols", string, immutableList(SymbolInfo))
 
         // Backend -> frontend: pushed whenever backend readiness changes, so the
         // MCP layer can reflect liveness without polling.

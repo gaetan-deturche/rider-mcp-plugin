@@ -1,8 +1,8 @@
 package dev.ridermcp.server
 
 import com.intellij.openapi.diagnostic.logger
-import dev.ridermcp.tools.DebugTools
-import dev.ridermcp.tools.InterfaceTools
+import dev.ridermcp.tools.DiagnosticsTools
+import dev.ridermcp.tools.WindowContentTools
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.engine.EmbeddedServer
@@ -17,8 +17,9 @@ import io.modelcontextprotocol.kotlin.sdk.server.mcp
  * Embeds a Ktor server that speaks MCP over SSE. MCP clients (e.g. Claude
  * Code, IDE agents) connect to:  http://127.0.0.1:<port>/sse
  *
- * Tool registration is delegated to [InterfaceTools] and [DebugTools]; both
- * read live IDE/backend state when a tool is invoked.
+ * Tool registration is delegated to [WindowContentTools] (tool-window /
+ * console content) and [DiagnosticsTools] (backend status); both read live
+ * IDE/backend state when a tool is invoked.
  */
 class McpHttpServer(private val port: Int) {
 
@@ -44,8 +45,8 @@ class McpHttpServer(private val port: Int) {
                 ),
             ),
         )
-        InterfaceTools.register(server)
-        DebugTools.register(server)
+        WindowContentTools.register(server)
+        DiagnosticsTools.register(server)
         return server
     }
 

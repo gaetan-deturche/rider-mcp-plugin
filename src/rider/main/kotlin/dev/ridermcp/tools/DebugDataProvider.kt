@@ -10,7 +10,6 @@ import com.jetbrains.rd.util.lifetime.LifetimeDefinition
 import com.jetbrains.rider.projectView.solution
 import dev.ridermcp.model.BackendStatus
 import dev.ridermcp.model.RiderMcpModel
-import dev.ridermcp.model.SymbolInfo
 import dev.ridermcp.model.riderMcpModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -18,10 +17,9 @@ import kotlinx.coroutines.withContext
 /**
  * Project-scoped bridge to the .NET backend over the RD protocol.
  *
- * The generated model accessor (`solution.riderMcpModel`) and the call/struct
- * types (`RiderMcpModel`, `BackendStatus`, `SymbolInfo`) are produced by
- * `:protocol`'s rdgen at build time — they only resolve after
- * `./gradlew :protocol:rdgen` has run.
+ * The generated model accessor (`solution.riderMcpModel`) and the types
+ * (`RiderMcpModel`, `BackendStatus`) are produced by `:protocol`'s rdgen at
+ * build time — they only resolve after `./gradlew :protocol:rdgen` has run.
  *
  * RD calls must be issued on the protocol scheduler, which in the frontend is
  * the EDT; [callBackend] enforces that and suspends until the backend replies.
@@ -38,11 +36,6 @@ class DebugDataProvider(private val project: Project) : Disposable {
     suspend fun backendStatus(): BackendStatus? = callBackend { model ->
         model.getBackendStatus.startSuspending(lifetimeDef.lifetime, Unit)
     }
-
-    /** Symbols resolved by the backend for [query]; empty if backend absent. */
-    suspend fun findSymbols(query: String): List<SymbolInfo> =
-        callBackend { model -> model.findSymbols.startSuspending(lifetimeDef.lifetime, query) }
-            ?: emptyList()
 
     /**
      * Switches to the protocol scheduler (EDT), resolves the bound model for
