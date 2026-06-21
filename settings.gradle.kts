@@ -10,13 +10,13 @@ pluginManagement {
     resolutionStrategy {
         eachPlugin {
             if (requested.id.id == "com.jetbrains.rdgen") {
-                useModule("com.jetbrains.rd:rd-gen:2024.3.1")
+                useModule("com.jetbrains.rd:rd-gen:2026.1.3")
             }
         }
     }
     // Centralized plugin versions; build scripts apply by id without versions.
     plugins {
-        id("org.jetbrains.kotlin.jvm") version "2.1.0"
+        id("org.jetbrains.kotlin.jvm") version "2.3.0"
         id("org.jetbrains.intellij.platform") version "2.2.1"
     }
 }

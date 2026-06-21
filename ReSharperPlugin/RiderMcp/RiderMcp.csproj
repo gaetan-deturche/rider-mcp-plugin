@@ -17,7 +17,7 @@
     <!-- Brings the ReSharper/Rider backend assemblies *and* the RD framework
          (JetBrains.RdFramework, used by the generated Model). Version follows
          the Rider release (2024.3 -> 243.x wave). -->
-    <PackageReference Include="JetBrains.Rider.SDK" Version="2024.3.*" />
+    <PackageReference Include="JetBrains.Rider.SDK" Version="2026.1.*" />
     <!-- Pin to resolve a transitive version conflict pulled in via the SDK
          (Castle.Core wants >=4.3.0 while External.Iis wants =4.0.0). -->
     <PackageReference Include="System.Diagnostics.TraceSource" Version="4.3.0" />

@@ -3,11 +3,9 @@ package dev.ridermcp.server
 import com.intellij.openapi.diagnostic.logger
 import dev.ridermcp.tools.DiagnosticsTools
 import dev.ridermcp.tools.WindowContentTools
-import io.ktor.server.application.install
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.engine.EmbeddedServer
-import io.ktor.server.sse.SSE
 import io.modelcontextprotocol.kotlin.sdk.Implementation
 import io.modelcontextprotocol.kotlin.sdk.ServerCapabilities
 import io.modelcontextprotocol.kotlin.sdk.server.Server
@@ -29,9 +27,8 @@ class McpHttpServer(private val port: Int) {
 
     fun start() {
         engine = embeddedServer(CIO, host = "127.0.0.1", port = port) {
-            install(SSE)
-            // The MCP Kotlin SDK wires the /sse + /message routes for us; each
-            // connecting client gets its own Server instance via the factory.
+            // mcp { } installs the SSE plugin itself and wires the /sse + /message
+            // routes; installing SSE here too causes a DuplicatePluginException.
             mcp { buildServer() }
         }.also { it.start(wait = false) }
         log.info("MCP SSE endpoint listening on http://127.0.0.1:$port/sse")

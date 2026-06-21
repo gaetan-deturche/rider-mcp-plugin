@@ -57,8 +57,10 @@ dependencies {
         // already on the classpath — no extra bundled module needed.
     }
 
-    // Shared RD protocol models (generated Kotlin side).
-    implementation(project(":protocol"))
+    // NB: we do NOT depend on project(":protocol") at runtime. rdgen emits the
+    // Kotlin model directly into this module's source set, and it compiles
+    // against the platform's rd framework (rd.jar). Depending on the protocol
+    // jar would drag rd-gen + kotlin-compiler-embeddable into the plugin.
 
     // --- MCP server (HTTP / SSE transport) ---------------------------------
     // Official MCP Kotlin SDK. Pin to a version that matches your Ktor line;
@@ -70,6 +72,28 @@ dependencies {
     implementation("io.ktor:ktor-server-sse:3.0.3")
     implementation("io.ktor:ktor-server-content-negotiation:3.0.3")
     implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.3")
+}
+
+// The IDE provides Kotlin stdlib/reflect and kotlinx-coroutines. Bundling our
+// own copies makes the plugin classloader hold different Class objects for
+// kotlin.coroutines.* / kotlinx.coroutines.Dispatchers than the platform, which
+// breaks every suspend call that crosses the plugin<->platform boundary
+// (Dispatchers.EDT, and even invoking our suspend ProjectActivity). Exclude them
+// so the platform's copies are used; we only bundle Ktor + MCP SDK + serialization.
+// Scope these to `implementation` only (it propagates to compile/runtime
+// classpath, which drive bundling) — NOT configurations.all, which would also
+// strip stdlib from the Kotlin compiler's own tooling classpath and break the
+// build. The platform supplies these from the IDE jars at compile and runtime.
+configurations.named("implementation") {
+    exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
+    exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-common")
+    exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-jdk7")
+    exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-jdk8")
+    exclude(group = "org.jetbrains.kotlin", module = "kotlin-reflect")
+    exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core")
+    exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core-jvm")
+    exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-jdk8")
+    exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-slf4j")
 }
 
 intellijPlatform {

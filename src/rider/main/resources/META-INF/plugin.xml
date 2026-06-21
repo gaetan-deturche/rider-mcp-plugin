@@ -15,16 +15,26 @@
     <depends>com.intellij.modules.rider</depends>
 
     <extensions defaultExtensionId="com.intellij">
-        <!-- Application-level service owning the MCP HTTP server lifecycle. -->
-        <applicationService
-            serviceImplementation="dev.ridermcp.McpServerService"/>
-
-        <!-- Project-level bridge to the backend model + debug data. -->
-        <projectService
-            serviceImplementation="dev.ridermcp.tools.DebugDataProvider"/>
+        <!-- NB: McpServerService and DebugDataProvider are registered via their
+             @Service annotations — do NOT also declare them here, or the
+             duplicate registration aborts the rest of this extensions block
+             (which previously swallowed the postStartupActivity + notificationGroup). -->
 
         <!-- Start the MCP server when a solution opens. -->
         <postStartupActivity
             implementation="dev.ridermcp.McpServerStartup"/>
+
+        <!-- Balloon notifications for the manual start action. -->
+        <notificationGroup id="RiderMcp" displayType="BALLOON"/>
     </extensions>
+
+    <actions>
+        <!-- Manual fallback / verification: Tools | Start MCP Server -->
+        <action id="dev.ridermcp.StartMcpServer"
+                class="dev.ridermcp.StartMcpServerAction"
+                text="Start MCP Server"
+                description="Starts the Rider MCP HTTP/SSE server if it isn't already running.">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>

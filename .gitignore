@@ -20,3 +20,6 @@ obj/
 # OS / misc
 .DS_Store
 *.log
+
+# Local GUI-test launcher (machine-specific paths)
+run-ide.sh
