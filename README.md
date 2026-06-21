@@ -144,15 +144,19 @@ tag push (see [Releasing / CI](#releasing--ci)).
       `DebugDataProvider` (EDT/protocol-scheduler aware) → `backend_status` tool.
 - [x] Backend `RiderMcpHost` registered as an eager solution component
       (`Instantiation.ContainerAsyncPrimaryThread`), so it wires the RD handlers
-      when a solution opens. The frontend MCP server starts on solution-open
-      (`postStartupActivity`).
+      when a solution opens. The frontend MCP server **auto-starts at IDE launch**
+      via `McpAppStartup : AppLifecycleListener.appStarted()` — no solution or
+      menu click needed (`postStartupActivity` never fired here; kept as a backup).
 - [x] `runIde` smoke test: the plugin **loads cleanly** (`Loaded custom
       plugins: rider-mcp-plugin`), the ReSharper backend recognizes it, and
       there are no errors from `dev.ridermcp`.
-- [ ] Confirm the MCP server binds + the RD round-trip works at runtime. This
-      could not be verified in the headless CI/dev environment used here — the
-      sandbox Rider GUI hangs during first-run startup with no real display.
-      Verify on a desktop: `./gradlew runIde`, open a solution, then connect an
-      MCP client to `http://127.0.0.1:6363/sse` and call `backend_status`.
-- [ ] Verify the Swing text-extraction against real Build/Debug views — some
-      consoles wrap editors in ways the component walk may need to special-case.
+- [x] Debugger tools (`DebuggerTools.kt`) over the XDebugger API: `debug_status`,
+      `list_threads`, `get_call_stack`, `get_local_variables`, `evaluate`,
+      `list_breakpoints`. Async callbacks adapted to coroutines off the EDT.
+- [x] **Confirmed at runtime on desktop Rider 2026.1**: the MCP server binds on
+      `http://127.0.0.1:6363/sse`, tools execute, and the RD round-trip works
+      (`backend_status`). The debugger tools were verified live against a paused
+      C++ session (call stack, typed locals, expression evaluation).
+- [x] Verified the Swing text-extraction against a real Build view —
+      `read_tool_window('Build')` returns live MSBuild output. (Other consoles
+      may still wrap editors in ways the component walk needs to special-case.)
