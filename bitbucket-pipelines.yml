@@ -37,20 +37,22 @@ definitions:
           - ./gradlew --no-daemon --console=plain :protocol:rdgen
           - ./gradlew --no-daemon --console=plain buildPlugin
           # --- publish the .zip to the repo's Downloads (stable, non-expiring link) ---
-          # Needs a secured repo variable BITBUCKET_APP_PASSWORD (or API token) with
-          # the 'repository:write' scope; create it in Repository settings ->
-          # Repository variables. Re-uploading the same filename replaces it. The
-          # guard lets the build still succeed (artifact only) if it isn't set yet.
+          # Uses an Atlassian API token (app passwords are being removed July 2026).
+          # Create two repo variables (Repository settings -> Repository variables):
+          #   BITBUCKET_API_USER  = the Atlassian account email that owns the workspace
+          #   BITBUCKET_API_TOKEN = a scoped API token (write:repository:bitbucket), secured
+          # Re-uploading the same filename replaces it. The guard lets the build still
+          # succeed (artifact only) if the token isn't configured yet.
           - |
-            if [ -n "$BITBUCKET_APP_PASSWORD" ]; then
+            if [ -n "$BITBUCKET_API_TOKEN" ]; then
               ZIP=$(ls build/distributions/*.zip | head -1)
               echo "Uploading $ZIP to Downloads..."
-              curl -sS --fail -u "s0m30n3:$BITBUCKET_APP_PASSWORD" \
+              curl -sS --fail -u "$BITBUCKET_API_USER:$BITBUCKET_API_TOKEN" \
                 "https://api.bitbucket.org/2.0/repositories/$BITBUCKET_REPO_FULL_NAME/downloads" \
                 --form files=@"$ZIP"
               echo "Uploaded $ZIP to Repository -> Downloads"
             else
-              echo "BITBUCKET_APP_PASSWORD not set — skipping Downloads upload (artifact still attached)"
+              echo "BITBUCKET_API_TOKEN not set — skipping Downloads upload (artifact still attached)"
             fi
         artifacts:
           - build/distributions/**    # also kept as a per-run pipeline artifact
