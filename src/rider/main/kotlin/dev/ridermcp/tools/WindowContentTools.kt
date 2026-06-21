@@ -70,12 +70,14 @@ object WindowContentTools {
             name = "read_tool_window",
             description = "Reads the text content currently shown in a tool window " +
                 "(e.g. id='Build' for build output, 'Problems View', 'Version Control'). " +
-                "Returns the trailing portion when large.",
+                "Defaults to the trailing portion; page with offset/count (lines).",
             inputSchema = Tool.Input(
                 properties = buildJsonObject {
                     put("id", strProp("Tool window id, as reported by list_tool_windows."))
                     put("tab", numProp("Optional: content tab index (defaults to the selected tab)."))
-                    put("maxChars", numProp("Optional: max characters to return (default $DEFAULT_MAX_CHARS)."))
+                    put("offset", offsetProp())
+                    put("count", countProp())
+                    put("maxChars", numProp("Optional: payload cap in characters (default $DEFAULT_MAX_CHARS)."))
                     put("solution", solutionProp())
                 },
                 required = listOf("id"),
@@ -88,7 +90,6 @@ object WindowContentTools {
             val project = resolveProject(request.arguments.stringArg("solution"))
                 ?: return@addTool noSolution()
             val tab = request.arguments.intArg("tab")
-            val maxChars = request.arguments.intArg("maxChars") ?: DEFAULT_MAX_CHARS
 
             val raw = withContext(Dispatchers.EDT) {
                 val tw = ToolWindowManager.getInstance(project).getToolWindow(id) ?: return@withContext null
@@ -100,7 +101,7 @@ object WindowContentTools {
             val text = when {
                 raw == null -> "No tool window '$id' (or no readable content). Try list_tool_windows."
                 raw.isBlank() -> "Tool window '$id' has no extractable text content."
-                else -> tail(raw, maxChars)
+                else -> window(raw, request.arguments)
             }
             CallToolResult(content = listOf(TextContent(text)))
         }
@@ -134,12 +135,14 @@ object WindowContentTools {
             name = "read_process_output",
             description = "Reads the console output of a run/debug process (the debug " +
                 "process log / program output). Selects by index, then by name match, " +
-                "else the currently selected process.",
+                "else the currently selected process. Page with offset/count (lines).",
             inputSchema = Tool.Input(
                 properties = buildJsonObject {
                     put("index", numProp("Optional: process index from list_processes."))
                     put("name", strProp("Optional: substring match against the process display name."))
-                    put("maxChars", numProp("Optional: max characters to return (default $DEFAULT_MAX_CHARS)."))
+                    put("offset", offsetProp())
+                    put("count", countProp())
+                    put("maxChars", numProp("Optional: payload cap in characters (default $DEFAULT_MAX_CHARS)."))
                     put("solution", solutionProp())
                 },
             ),
@@ -148,7 +151,6 @@ object WindowContentTools {
                 ?: return@addTool noSolution()
             val index = request.arguments.intArg("index")
             val name = request.arguments.stringArg("name")
-            val maxChars = request.arguments.intArg("maxChars") ?: DEFAULT_MAX_CHARS
 
             val raw = withContext(Dispatchers.EDT) {
                 val mgr = RunContentManager.getInstance(project)
@@ -164,7 +166,7 @@ object WindowContentTools {
             val text = when {
                 raw == null -> "No matching process console. Try list_processes."
                 raw.isBlank() -> "Process console is empty."
-                else -> tail(raw, maxChars)
+                else -> window(raw, request.arguments)
             }
             CallToolResult(content = listOf(TextContent(text)))
         }
@@ -199,6 +201,43 @@ object WindowContentTools {
         return sb.toString().trimEnd()
     }
 
+    /**
+     * Renders the requested slice of [text].
+     *
+     * Pagination is line-based via the `offset`/`count` args (logs are
+     * line-oriented). `offset` is a 0-based line index; negative counts from the
+     * end (e.g. -100 = last 100 lines). `count` bounds the number of lines.
+     * `maxChars` is a final payload cap regardless of line selection.
+     *
+     * With no `offset`/`count`, behaviour is unchanged: the char-capped tail.
+     * A `[lines X–Y of N]` header is prefixed when windowing, so the client can
+     * page (request offset=Y next, etc.).
+     */
+    private fun window(text: String, args: kotlinx.serialization.json.JsonObject): String {
+        val offset = args.intArg("offset")
+        val count = args.intArg("count")
+        val maxChars = args.intArg("maxChars") ?: DEFAULT_MAX_CHARS
+
+        if (offset == null && count == null) return tail(text, maxChars)
+
+        val lines = text.split('\n')
+        val total = lines.size
+        val start = when {
+            offset == null -> 0
+            offset < 0 -> maxOf(0, total + offset)
+            else -> minOf(offset, total)
+        }
+        val end = if (count != null) minOf(total, start + maxOf(0, count)) else total
+        val slice = lines.subList(start, end).joinToString("\n")
+        val body = if (slice.length > maxChars) {
+            "…[char-capped at $maxChars]\n" + slice.takeLast(maxChars)
+        } else {
+            slice
+        }
+        val from = if (total == 0) 0 else start + 1
+        return "[lines $from–$end of $total]\n$body"
+    }
+
     /** Keeps the trailing [maxChars] (recent output matters most for logs). */
     private fun tail(text: String, maxChars: Int): String =
         if (text.length <= maxChars) text
@@ -209,6 +248,8 @@ object WindowContentTools {
 
     private fun solutionOnlyProps() = buildJsonObject { put("solution", solutionProp()) }
     private fun solutionProp() = strProp("Optional: target solution name when several are open.")
+    private fun offsetProp() = numProp("Optional: 0-based start line; negative counts from the end (e.g. -100 = last 100 lines).")
+    private fun countProp() = numProp("Optional: number of lines to return from offset.")
     private fun strProp(desc: String) = buildJsonObject { put("type", "string"); put("description", desc) }
     private fun numProp(desc: String) = buildJsonObject { put("type", "number"); put("description", desc) }
 }

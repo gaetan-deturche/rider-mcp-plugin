@@ -47,8 +47,10 @@ doesn't already cover (it has symbol/solution lookup, so those were dropped).
 | `backend_status` | Backend snapshot over RD: solution name, project count, version, readiness |
 
 Content extraction walks the tool window's Swing component tree on the EDT,
-pulling text from editor and text components; large output is tail-truncated
-(default 20k chars, override with `maxChars`).
+pulling text from editor and text components. `read_tool_window` and
+`read_process_output` support **line-based pagination**: `offset` (0-based;
+negative counts from the end) and `count`, with a `[lines X–Y of N]` header so
+clients can page. Output is still capped by `maxChars` (default 20k).
 
 Clients connect to `http://127.0.0.1:6363/sse` (override the port with the JVM
 property `-Drider.mcp.port=<n>`).
