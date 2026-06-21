@@ -102,10 +102,38 @@ though it compiles.
 
 Reference: the 243 → 261 migration commit shows the exact set of changes.
 
+## Releasing / CI
+
+CI runs on **Bitbucket Pipelines** (`bitbucket-pipelines.yml`) and builds the
+full plugin (frontend + .NET backend), uploading the `.zip` as a pipeline
+artifact.
+
+It is **tag-only**, not per-push. The Rider SDK is multi-GB and can't be cached
+on Bitbucket Cloud — the gradle cache is ~6.2 GiB compressed, over the **1 GiB**
+upload limit, so it's discarded every run (and attempting to upload it wastes
+~10 min compressing first). So there's no gradle cache, every build re-downloads
+the SDK, and we only pay that cost when cutting a release. **Day-to-day
+validation is local `./gradlew buildPlugin`.**
+
+**Cut a release:**
+
+```bash
+# bump pluginVersion in gradle.properties first, then:
+git tag v0.1.0
+git push origin v0.1.0      # any tag triggers the build
+```
+
+**Build on demand without tagging:** Bitbucket → *Pipelines → Run pipeline →
+custom: `build`*.
+
+The build step installs .NET 8 and `libicu` (a hard .NET runtime dep the slim
+Temurin image lacks), runs `:protocol:rdgen`, then `buildPlugin`. The publishable
+zip lands in `build/distributions/` (downloadable from the run's *Artifacts*).
+
 ## Status / TODO
 
-The full build compiles locally and CI (`bitbucket-pipelines.yml`) runs it on
-every push.
+The full build compiles locally; CI (`bitbucket-pipelines.yml`) builds it on
+tag push (see [Releasing / CI](#releasing--ci)).
 
 - [x] Gradle build + rdgen model generation (Kotlin + C#).
 - [x] Frontend Kotlin compiles against the Rider SDK.
