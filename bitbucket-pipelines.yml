@@ -36,10 +36,15 @@ definitions:
           - build/distributions/**    # the publishable plugin .zip
 
 pipelines:
-  # Every push to any branch is compiled.
-  default:
-    - step: *build
-  # Keep main explicit too (same build) for clarity in the UI.
-  branches:
-    main:
+  # Build ONLY when a tag is pushed — i.e. when cutting a release. Day-to-day
+  # pushes are validated by local builds, so CI doesn't re-download the multi-GB
+  # Rider SDK on every commit (Bitbucket Cloud can't cache something that large).
+  # Tag a release with e.g.  git tag v0.1.0 && git push origin v0.1.0
+  tags:
+    '*':
+      - step: *build
+  # On-demand build from the UI (Pipelines -> Run pipeline -> custom: build),
+  # for when you want a CI artifact without tagging.
+  custom:
+    build:
       - step: *build
