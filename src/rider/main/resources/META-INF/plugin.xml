@@ -22,13 +22,8 @@
         <!-- Project-level bridge to the backend model + debug data. -->
         <projectService
             serviceImplementation="dev.ridermcp.tools.DebugDataProvider"/>
-    </extensions>
 
-    <applicationListeners>
-        <!-- Starts/stops the MCP server with the IDE lifecycle. -->
-    </applicationListeners>
-
-    <extensions defaultExtensionId="com.intellij">
+        <!-- Start the MCP server when a solution opens. -->
         <postStartupActivity
             implementation="dev.ridermcp.McpServerStartup"/>
     </extensions>

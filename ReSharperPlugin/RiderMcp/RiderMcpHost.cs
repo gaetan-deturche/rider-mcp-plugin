@@ -16,7 +16,10 @@ namespace RiderMcp
     /// <c>GetRiderMcpModel()</c> accessor) only resolve after rdgen has run, so
     /// the build wires <c>:protocol:rdgen</c> ahead of compilation.
     /// </summary>
-    [SolutionComponent(Instantiation.DemandAnyThreadSafe)]
+    // Container (eager) instantiation on the primary thread: created as the
+    // solution container is composed, so the RD handlers are registered when a
+    // solution opens (Demand* would never instantiate since nothing requests it).
+    [SolutionComponent(Instantiation.ContainerAsyncPrimaryThread)]
     public class RiderMcpHost
     {
         public RiderMcpHost(Lifetime lifetime, ISolution solution)

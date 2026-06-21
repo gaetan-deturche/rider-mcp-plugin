@@ -86,7 +86,17 @@ every push.
       `read_tool_window`, `list_processes`, `read_process_output`.
 - [x] RD diagnostics: backend `GetBackendStatus` handler + frontend
       `DebugDataProvider` (EDT/protocol-scheduler aware) → `backend_status` tool.
-- [ ] Register the backend `RiderMcpHost` so Rider loads it, and confirm the
-      protocol binds at runtime (`runIde`).
+- [x] Backend `RiderMcpHost` registered as an eager solution component
+      (`Instantiation.ContainerAsyncPrimaryThread`), so it wires the RD handlers
+      when a solution opens. The frontend MCP server starts on solution-open
+      (`postStartupActivity`).
+- [x] `runIde` smoke test: the plugin **loads cleanly** (`Loaded custom
+      plugins: rider-mcp-plugin`), the ReSharper backend recognizes it, and
+      there are no errors from `dev.ridermcp`.
+- [ ] Confirm the MCP server binds + the RD round-trip works at runtime. This
+      could not be verified in the headless CI/dev environment used here — the
+      sandbox Rider GUI hangs during first-run startup with no real display.
+      Verify on a desktop: `./gradlew runIde`, open a solution, then connect an
+      MCP client to `http://127.0.0.1:6363/sse` and call `backend_status`.
 - [ ] Verify the Swing text-extraction against real Build/Debug views — some
       consoles wrap editors in ways the component walk may need to special-case.
