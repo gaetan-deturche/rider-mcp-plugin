@@ -5,7 +5,7 @@
 
     <description><![CDATA[
         Exposes Rider IDE interface and debug data to MCP clients over a local
-        HTTP/SSE endpoint. Dual-part plugin: a Kotlin frontend hosts the MCP
+        Streamable HTTP endpoint. Dual-part plugin: a Kotlin frontend hosts the MCP
         server; a .NET (ReSharper) backend supplies symbol/solution data over
         the RD protocol.
     ]]></description>
@@ -39,7 +39,7 @@
         <action id="dev.ridermcp.StartMcpServer"
                 class="dev.ridermcp.StartMcpServerAction"
                 text="Start MCP Server"
-                description="Starts the Rider MCP HTTP/SSE server if it isn't already running.">
+                description="Starts the Rider MCP Streamable HTTP server if it isn't already running.">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
     </actions>

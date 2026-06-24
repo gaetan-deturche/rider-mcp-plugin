@@ -5,7 +5,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
 
 /**
- * Application-level owner of the MCP HTTP/SSE server. Started by
+ * Application-level owner of the MCP Streamable HTTP server. Started by
  * [McpServerStartup] on solution open (or manually via the "Start MCP Server"
  * action) and torn down when this service is disposed (IDE shutdown).
  *
@@ -34,7 +34,7 @@ class McpServerService : Disposable {
         return try {
             log.warn("Rider MCP: starting server on 127.0.0.1:$port …")
             server = dev.ridermcp.server.McpHttpServer(port).also { it.start() }
-            log.warn("Rider MCP: server started, SSE at http://127.0.0.1:$port/sse")
+            log.warn("Rider MCP: server started, Streamable HTTP at http://127.0.0.1:$port/stream")
             true
         } catch (t: Throwable) {
             log.error("Rider MCP: FAILED to start server on port $port", t)

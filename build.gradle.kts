@@ -64,16 +64,18 @@ dependencies {
     // against the platform's rd framework (rd.jar). Depending on the protocol
     // jar would drag rd-gen + kotlin-compiler-embeddable into the plugin.
 
-    // --- MCP server (HTTP / SSE transport) ---------------------------------
+    // --- MCP server (Streamable HTTP transport) ----------------------------
     // Official MCP Kotlin SDK. Must use the same Ktor MAJOR.MINOR as the IDE
     // bundles (Rider 2026.1 ships Ktor 3.4.x as platform modules that win at
     // runtime). SDK 0.13.0 targets Ktor 3.4.3 ≈ the platform's 3.4.1.
     implementation("io.modelcontextprotocol:kotlin-sdk:0.13.0")
 
-    // Embedded HTTP server for the SSE MCP endpoint. Pinned to 3.4.1 to match
-    // the Ktor that Rider 2026.1 bundles as platform library modules — the
-    // platform's copy is what loads at runtime, so our bytecode must target the
-    // same version (3.0.x gave NoSuchMethodError on embeddedServer).
+    // Embedded HTTP server for the Streamable HTTP MCP endpoint. Pinned to 3.4.1
+    // to match the Ktor that Rider 2026.1 bundles as platform library modules —
+    // the platform's copy is what loads at runtime, so our bytecode must target
+    // the same version (3.0.x gave NoSuchMethodError on embeddedServer).
+    // ktor-server-sse is still required: mcpStreamableHttp installs the SSE
+    // plugin itself for the streaming half of the transport.
     implementation("io.ktor:ktor-server-cio:3.4.1")
     implementation("io.ktor:ktor-server-sse:3.4.1")
     implementation("io.ktor:ktor-server-content-negotiation:3.4.1")

@@ -4,21 +4,18 @@ import com.intellij.openapi.diagnostic.logger
 import dev.ridermcp.tools.DebuggerTools
 import dev.ridermcp.tools.DiagnosticsTools
 import dev.ridermcp.tools.WindowContentTools
-import io.ktor.server.application.install
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.engine.EmbeddedServer
-import io.ktor.server.routing.routing
-import io.ktor.server.sse.SSE
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.server.ServerOptions
-import io.modelcontextprotocol.kotlin.sdk.server.mcp
+import io.modelcontextprotocol.kotlin.sdk.server.mcpStreamableHttp
 import io.modelcontextprotocol.kotlin.sdk.types.Implementation
 import io.modelcontextprotocol.kotlin.sdk.types.ServerCapabilities
 
 /**
- * Embeds a Ktor server that speaks MCP over SSE. MCP clients (e.g. Claude
- * Code, IDE agents) connect to:  http://127.0.0.1:<port>/sse
+ * Embeds a Ktor server that speaks MCP over Streamable HTTP. MCP clients (e.g.
+ * Claude Code, IDE agents) connect to:  http://127.0.0.1:<port>/stream
  *
  * Tool registration is delegated to [WindowContentTools] (tool-window /
  * console content) and [DiagnosticsTools] (backend status); both read live
@@ -31,21 +28,20 @@ class McpHttpServer(private val port: Int) {
 
     fun start() {
         engine = embeddedServer(CIO, host = "127.0.0.1", port = port) {
-            // Mount the MCP SSE transport at /sse: GET /sse opens the stream and
-            // the endpoint event points clients to POST /sse?sessionId=…. The
-            // route-based mcp() (unlike Application.mcp()) does NOT install SSE
-            // itself, so install it here first.
-            install(SSE)
-            routing {
-                mcp("/sse") { buildServer() }
-            }
+            // Mount the MCP Streamable HTTP transport at /stream: a single endpoint
+            // serving GET/POST/DELETE with Mcp-Session-Id session tracking. The
+            // helper installs ContentNegotiation (McpJson) and SSE itself, so we
+            // must NOT install them here. DNS-rebinding protection is on by default
+            // and allows localhost/127.0.0.1/[::1] (the port is stripped before the
+            // check), which suits this loopback-only server.
+            mcpStreamableHttp(path = "/stream") { buildServer() }
         }.also { it.start(wait = false) }
-        log.info("MCP SSE endpoint listening on http://127.0.0.1:$port/sse")
+        log.info("MCP Streamable HTTP endpoint listening on http://127.0.0.1:$port/stream")
     }
 
     private fun buildServer(): Server {
         val server = Server(
-            serverInfo = Implementation(name = "rider-mcp", version = "0.1.0"),
+            serverInfo = Implementation(name = "rider-mcp", version = "0.2.0"),
             options = ServerOptions(
                 capabilities = ServerCapabilities(
                     tools = ServerCapabilities.Tools(listChanged = true),

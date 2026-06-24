@@ -17,7 +17,7 @@ class StartMcpServerAction : AnAction() {
         val service = com.intellij.openapi.application.ApplicationManager.getApplication()
             .getService(McpServerService::class.java)
         val ok = service.startIfNeeded(port)
-        val msg = if (ok) "MCP server running at http://127.0.0.1:$port/sse"
+        val msg = if (ok) "MCP server running at http://127.0.0.1:$port/stream"
                   else "MCP server FAILED to start (see idea.log)"
         notify(e, msg, if (ok) NotificationType.INFORMATION else NotificationType.ERROR)
     }

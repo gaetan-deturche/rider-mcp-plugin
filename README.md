@@ -1,7 +1,7 @@
 # rider-mcp-plugin
 
 A dual-part JetBrains **Rider** plugin that exposes IDE **interface** and
-**debug** data to MCP clients over a local **HTTP/SSE** endpoint.
+**debug** data to MCP clients over a local **Streamable HTTP** endpoint.
 
 ## Architecture
 
@@ -10,10 +10,10 @@ A dual-part JetBrains **Rider** plugin that exposes IDE **interface** and
 │  Kotlin frontend         │  <────────────────────────>  │  .NET (ReSharper)        │
 │  (IntelliJ platform)      │      :protocol models        │  backend                 │
 │                           │                              │                          │
-│  • MCP HTTP/SSE server     │                              │  • backend status        │
+│  • MCP Streamable HTTP srv │                              │  • backend status        │
 │  • tool-window/console tools│                             │    snapshot (diagnostics)│
 └───────────┬───────────────┘                              └────────────────────────┘
-            │  SSE  http://127.0.0.1:6363/sse
+            │  Streamable HTTP  http://127.0.0.1:6363/stream
             ▼
        MCP clients (Claude Code, IDE agents, …)
 ```
@@ -79,7 +79,7 @@ data model rendered per-row (e.g. `JTree`/`JList`-based test or Problems views)
 or is custom-painted aren't seen by the generic walk and return empty/partial
 text until a type-specific handler is added to `extractText`.
 
-Clients connect to `http://127.0.0.1:6363/sse` (override the port with the JVM
+Clients connect to `http://127.0.0.1:6363/stream` (override the port with the JVM
 property `-Drider.mcp.port=<n>`).
 
 ## Build & run
@@ -100,7 +100,7 @@ Prerequisites:
 ```
 
 A full `buildPlugin` has been verified end-to-end locally (frontend Kotlin +
-.NET backend compile; the 0.1.0 zip assembles with the backend dll bundled).
+.NET backend compile; the 0.2.0 zip assembles with the backend dll bundled).
 
 ## Updating to a new Rider version
 
@@ -146,8 +146,8 @@ validation is local `./gradlew buildPlugin`.**
 
 ```bash
 # bump pluginVersion in gradle.properties first, then:
-git tag v0.1.0
-git push origin v0.1.0      # any tag triggers the build
+git tag v0.2.0
+git push origin v0.2.0      # any tag triggers the build
 ```
 
 **Build on demand without tagging:** Bitbucket → *Pipelines → Run pipeline →
@@ -163,7 +163,7 @@ note pipeline artifacts expire after 14 days).
 served via the version-pinned raw URL:
 
 ```
-https://bitbucket.org/s0m30n3/rider-mcp-plugin/raw/main/dist/rider-mcp-plugin-0.1.0.zip
+https://bitbucket.org/s0m30n3/rider-mcp-plugin/raw/main/dist/rider-mcp-plugin-0.2.0.zip
 ```
 
 The filename carries the version, so the link is stable across releases. When
@@ -194,7 +194,7 @@ tag push (see [Releasing / CI](#releasing--ci)).
       `list_threads`, `get_call_stack`, `get_local_variables`, `evaluate`,
       `list_breakpoints`. Async callbacks adapted to coroutines off the EDT.
 - [x] **Confirmed at runtime on desktop Rider 2026.1**: the MCP server binds on
-      `http://127.0.0.1:6363/sse`, tools execute, and the RD round-trip works
+      `http://127.0.0.1:6363/stream`, tools execute, and the RD round-trip works
       (`backend_status`). The debugger tools were verified live against a paused
       C++ session (call stack, typed locals, expression evaluation).
 - [x] Verified the Swing text-extraction against a real Build view —
