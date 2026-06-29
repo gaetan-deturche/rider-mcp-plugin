@@ -1,0 +1,36 @@
+name: Build plugin
+on:
+  push:
+    branches: ['**']
+    tags: ['*']
+  pull_request:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0'
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libicu-dev
+      - name: Cache Gradle (incl. downloaded Rider SDK)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+      - run: ./gradlew --no-daemon --console=plain :protocol:rdgen
+      - run: ./gradlew --no-daemon --console=plain buildPlugin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-zip
+          path: build/distributions/**
