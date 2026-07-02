@@ -4,6 +4,9 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
@@ -23,6 +26,20 @@ internal fun JsonObject?.stringArg(key: String): String? =
 /** Reads an int-valued argument (accepts JSON number or numeric string). */
 internal fun JsonObject?.intArg(key: String): Int? =
     this?.get(key)?.let { runCatching { it.jsonPrimitive.content.toInt() }.getOrNull() }
+
+/** Reads a boolean-valued argument (accepts JSON boolean or "true"/"false" string). */
+internal fun JsonObject?.boolArg(key: String): Boolean? =
+    this?.get(key)?.let { runCatching { it.jsonPrimitive.let { p -> p.booleanOrNull ?: p.content.toBooleanStrictOrNull() } }.getOrNull() }
+
+/**
+ * Reads a string-list argument. Accepts a JSON array of strings, or a single
+ * string (treated as a one-element list). Returns an empty list if absent.
+ */
+internal fun JsonObject?.stringListArg(key: String): List<String> {
+    val element = this?.get(key) ?: return emptyList()
+    return runCatching { element.jsonArray.mapNotNull { it.jsonPrimitive.contentOrNull } }
+        .getOrElse { listOfNotNull(element.jsonPrimitive.contentOrNull) }
+}
 
 /** Builds a JSON-Schema object for a tool's input (MCP SDK 0.13 ToolSchema). */
 internal fun toolSchema(properties: JsonObject, required: List<String> = emptyList()): ToolSchema =

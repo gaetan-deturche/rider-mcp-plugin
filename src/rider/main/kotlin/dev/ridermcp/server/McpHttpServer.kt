@@ -1,6 +1,7 @@
 package dev.ridermcp.server
 
 import com.intellij.openapi.diagnostic.logger
+import dev.ridermcp.tools.BuildTools
 import dev.ridermcp.tools.DebuggerTools
 import dev.ridermcp.tools.DiagnosticsTools
 import dev.ridermcp.tools.WindowContentTools
@@ -41,7 +42,7 @@ class McpHttpServer(private val port: Int) {
 
     private fun buildServer(): Server {
         val server = Server(
-            serverInfo = Implementation(name = "rider-mcp", version = "0.2.0"),
+            serverInfo = Implementation(name = "rider-mcp", version = "0.3.0"),
             options = ServerOptions(
                 capabilities = ServerCapabilities(
                     tools = ServerCapabilities.Tools(listChanged = true),
@@ -51,6 +52,7 @@ class McpHttpServer(private val port: Int) {
         WindowContentTools.register(server)
         DebuggerTools.register(server)
         DiagnosticsTools.register(server)
+        BuildTools.register(server)
         return server
     }
 

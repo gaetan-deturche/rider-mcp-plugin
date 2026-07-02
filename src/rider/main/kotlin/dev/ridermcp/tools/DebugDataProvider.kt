@@ -8,6 +8,8 @@ import com.intellij.openapi.project.Project
 import com.jetbrains.rd.util.lifetime.LifetimeDefinition
 import com.jetbrains.rider.projectView.solution
 import dev.ridermcp.model.BackendStatus
+import dev.ridermcp.model.BuildProjectParams
+import dev.ridermcp.model.BuildProjectResult
 import dev.ridermcp.model.RiderMcpModel
 import dev.ridermcp.model.riderMcpModel
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +37,18 @@ class DebugDataProvider(private val project: Project) : Disposable {
     suspend fun backendStatus(): BackendStatus? = callBackend { model ->
         model.getBackendStatus.startSuspending(lifetimeDef.lifetime, Unit)
     }
+
+    /**
+     * Builds the named project(s) via the backend and suspends until the build
+     * finishes. Returns null if the backend isn't connected.
+     */
+    suspend fun buildProject(projectNames: List<String>, rebuild: Boolean, withoutDependencies: Boolean): BuildProjectResult? =
+        callBackend { model ->
+            model.buildProject.startSuspending(
+                lifetimeDef.lifetime,
+                BuildProjectParams(projectNames, rebuild, withoutDependencies),
+            )
+        }
 
     /**
      * Switches to the protocol scheduler (EDT), resolves the bound model for

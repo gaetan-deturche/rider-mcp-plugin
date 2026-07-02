@@ -66,6 +66,17 @@ object/field inspection instead.
 |------|---------|
 | `backend_status` | Backend snapshot over RD: solution name, project count, version, readiness |
 
+**Build (`BuildTools.kt`)** — RD-backed, drives the .NET backend's `ISolutionBuilder`:
+
+| Tool | Purpose |
+|------|---------|
+| `build_project` | Build **specific** project(s) — the gap the official Rider `build_solution` leaves (it only builds the whole solution). Args: `projects` (name list), `rebuild`, `withoutDependencies`, `solution`. Returns success + errors/warnings with `file:line` |
+
+`build_project` runs the same path as "Build Selected Project": the backend
+resolves each `IProject` by name, issues `ISolutionBuilder.CreateBuildRequest`
+(`BuildSessionTarget.Build`/`Rebuild`, `IsSingleProjectBuild`), awaits completion,
+and resolves each build-error offset to a `BuildEvent` (kind/message/code/file/line/column).
+
 Content extraction walks the tool window's Swing component tree on the EDT,
 pulling text from editor and text components. `read_tool_window` and
 `read_process_output` support **line-based pagination**: `offset` (0-based;
@@ -100,7 +111,7 @@ Prerequisites:
 ```
 
 A full `buildPlugin` has been verified end-to-end locally (frontend Kotlin +
-.NET backend compile; the 0.2.0 zip assembles with the backend dll bundled).
+.NET backend compile; the 0.3.0 zip assembles with the backend dll bundled).
 
 ## Updating to a new Rider version
 
@@ -146,8 +157,8 @@ validation is local `./gradlew buildPlugin`.**
 
 ```bash
 # bump pluginVersion in gradle.properties first, then:
-git tag v0.2.0
-git push origin v0.2.0      # any tag triggers the build
+git tag v0.3.0
+git push origin v0.3.0      # any tag triggers the build
 ```
 
 **Build on demand without tagging:** Bitbucket → *Pipelines → Run pipeline →
@@ -158,12 +169,11 @@ Temurin image lacks), runs `:protocol:rdgen`, then `buildPlugin`. The publishabl
 zip lands in `build/distributions/` (downloadable from the run's *Artifacts* —
 note pipeline artifacts expire after 14 days).
 
-**Download a release.** Bitbucket's *Downloads* feature requires a paid plan
-(Free returns HTTP 402), so each release zip is committed under `dist/` and
-served via the version-pinned raw URL:
+**Download a release.** Each release zip is committed under `dist/` and served
+via the version-pinned raw URL:
 
 ```
-https://bitbucket.org/s0m30n3/rider-mcp-plugin/raw/main/dist/rider-mcp-plugin-0.2.0.zip
+https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.3.0.zip
 ```
 
 The filename carries the version, so the link is stable across releases. When
