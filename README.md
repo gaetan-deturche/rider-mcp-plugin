@@ -169,12 +169,11 @@ Temurin image lacks), runs `:protocol:rdgen`, then `buildPlugin`. The publishabl
 zip lands in `build/distributions/` (downloadable from the run's *Artifacts* —
 note pipeline artifacts expire after 14 days).
 
-**Download a release.** Bitbucket's *Downloads* feature requires a paid plan
-(Free returns HTTP 402), so each release zip is committed under `dist/` and
-served via the version-pinned raw URL:
+**Download a release.** Each release zip is committed under `dist/` and served
+via the version-pinned raw URL:
 
 ```
-https://bitbucket.org/s0m30n3/rider-mcp-plugin/raw/main/dist/rider-mcp-plugin-0.2.0.zip
+https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.3.0.zip
 ```
 
 The filename carries the version, so the link is stable across releases. When
