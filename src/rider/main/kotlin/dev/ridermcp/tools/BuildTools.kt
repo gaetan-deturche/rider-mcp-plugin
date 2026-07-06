@@ -1,8 +1,13 @@
 package dev.ridermcp.tools
 
+import com.intellij.ide.plugins.PluginManagerCore
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.service
+import com.intellij.openapi.extensions.PluginId
+import com.intellij.openapi.project.Project
 import com.jetbrains.rider.debugger.editAndContinue.DotNetHotReloadManager
+import com.jetbrains.rider.projectView.solution
 import dev.ridermcp.model.BuildProblem
 import dev.ridermcp.model.BuildProjectResult
 import io.modelcontextprotocol.kotlin.sdk.server.Server
@@ -32,7 +37,8 @@ object BuildTools {
                 "solution) using Rider's build engine, and returns whether it succeeded plus any " +
                 "errors/warnings with file:line. If a hot-reload session is already running, it " +
                 "instead applies changes live (like the toolbar 'Apply Changes' button) unless " +
-                "rebuild=true. Use get_solution_projects to discover project names.",
+                "rebuild=true — .NET Hot Reload for .NET runs, or Unreal Live Coding for a running " +
+                "UE editor. Use get_solution_projects to discover project names.",
             inputSchema = toolSchema(
                 properties = buildJsonObject {
                     put("projects", buildJsonObject {
@@ -71,11 +77,15 @@ object BuildTools {
             // running process(es), not just the named project. A `rebuild` forces a
             // full build, so it always takes the build route.
             if (!rebuild) {
+                // .NET hot reload (run/debug session with hot reload).
                 val hotReload = runCatching { project.service<DotNetHotReloadManager>() }.getOrNull()
                 if (hotReload != null && hotReload.processes.isNotEmpty()) {
                     val kind = withContext(Dispatchers.EDT) { hotReload.applyChangesIfNeeded() }
                     return@addTool text("Hot reload (live session, ${hotReload.processes.size} process(es)): $kind")
                 }
+                // Unreal: Live Coding is the hot-reload equivalent (a cold build is
+                // refused while it's active). Trigger it like Rider's UE build button.
+                tryUnrealHotReload(project)?.let { return@addTool text(it) }
             }
 
             val result = project.service<DebugDataProvider>().buildProject(names, rebuild, withoutDeps)
@@ -83,6 +93,42 @@ object BuildTools {
 
             text(format(result))
         }
+    }
+
+    /**
+     * Unreal projects don't use .NET hot reload — the equivalent is Live Coding,
+     * driven from the running editor. Rider's UE build button (HotReloadBuildAction)
+     * just does saveAll() + fires RdRiderModel.triggerHotReload; we do the same when
+     * a Live Coding session is available (UnrealHost.isHotReloadAvailable). Returns a
+     * status string when it fired, or null when the UE hot-reload path doesn't apply
+     * (not a UE project / no live session / UnrealLink absent) so the caller builds.
+     *
+     * Done reflectively through the UnrealLink plugin's classloader so this plugin
+     * keeps no hard dependency on UnrealLink and still loads on non-Unreal setups.
+     */
+    private suspend fun tryUnrealHotReload(project: Project): String? {
+        return runCatching {
+            val loader = PluginManagerCore.getPlugin(PluginId.getId("unreal-link"))?.pluginClassLoader
+                ?: return null
+
+            val hostClass = loader.loadClass("com.jetbrains.rider.plugins.unreal.UnrealHost")
+            val companion = hostClass.getField("Companion").get(null)
+            val host = companion.javaClass.methods.first { it.name == "getInstance" }.invoke(companion, project)
+            val isUnreal = host.javaClass.methods.first { it.name == "isUnrealEngineSolution" }.invoke(host) as Boolean
+            val available = host.javaClass.methods.first { it.name == "isHotReloadAvailable" }.invoke(host) as Boolean
+            if (!isUnreal || !available) return null
+
+            withContext(Dispatchers.EDT) {
+                ApplicationManager.getApplication().saveAll()
+                val solution = project.solution
+                val model = loader.loadClass("com.jetbrains.rider.plugins.unreal.model.frontendBackend.RdRiderModel_PregeneratedKt")
+                    .methods.first { it.name == "getRdRiderModel" }.invoke(null, solution)
+                    ?: return@withContext
+                val signal = model.javaClass.methods.first { it.name == "getTriggerHotReload" }.invoke(model)
+                signal.javaClass.methods.first { it.name == "fire" && it.parameterCount == 1 }.invoke(signal, Unit)
+            }
+            "Triggered Unreal Live Coding / Hot Reload for the running session — check the editor's Live Coding tool window/log for results."
+        }.getOrNull()
     }
 
     private fun format(r: BuildProjectResult): String {
