@@ -56,7 +56,12 @@ dependencies {
         jetbrainsRuntime()
         // Solution protocol access (com.jetbrains.rider.projectView.solution) and
         // rd platform coroutines (startSuspending) live in core product jars,
-        // already on the classpath — no extra bundled module needed.
+        // already on the classpath.
+        // BuildTools' hot-reload path uses DotNetHotReloadManager (in the core
+        // intellij.rider jar) whose applyChangesIfNeeded() returns
+        // HotReloadApplyResultKind — that type lives in a separate product module
+        // that isn't on the compile classpath by default, so pull it in explicitly.
+        bundledModule("intellij.rider.debugger.shared")
     }
 
     // NB: we do NOT depend on project(":protocol") at runtime. rdgen emits the

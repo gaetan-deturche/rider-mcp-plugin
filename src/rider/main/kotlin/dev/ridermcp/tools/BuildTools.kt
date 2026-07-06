@@ -1,11 +1,15 @@
 package dev.ridermcp.tools
 
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.service
+import com.jetbrains.rider.debugger.editAndContinue.DotNetHotReloadManager
 import dev.ridermcp.model.BuildProblem
 import dev.ridermcp.model.BuildProjectResult
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -26,7 +30,9 @@ object BuildTools {
             name = "build_project",
             description = "Builds one or more specific projects in the open solution (not the whole " +
                 "solution) using Rider's build engine, and returns whether it succeeded plus any " +
-                "errors/warnings with file:line. Use get_solution_projects to discover project names.",
+                "errors/warnings with file:line. If a hot-reload session is already running, it " +
+                "instead applies changes live (like the toolbar 'Apply Changes' button) unless " +
+                "rebuild=true. Use get_solution_projects to discover project names.",
             inputSchema = toolSchema(
                 properties = buildJsonObject {
                     put("projects", buildJsonObject {
@@ -58,6 +64,19 @@ object BuildTools {
 
             val rebuild = request.arguments.boolArg("rebuild") ?: false
             val withoutDeps = request.arguments.boolArg("withoutDependencies") ?: false
+
+            // If a hot-reload session is already running, apply changes live —
+            // the same thing the toolbar "Apply Changes" button does — instead of a
+            // cold build. Like that button, this applies all pending edits to the
+            // running process(es), not just the named project. A `rebuild` forces a
+            // full build, so it always takes the build route.
+            if (!rebuild) {
+                val hotReload = runCatching { project.service<DotNetHotReloadManager>() }.getOrNull()
+                if (hotReload != null && hotReload.processes.isNotEmpty()) {
+                    val kind = withContext(Dispatchers.EDT) { hotReload.applyChangesIfNeeded() }
+                    return@addTool text("Hot reload (live session, ${hotReload.processes.size} process(es)): $kind")
+                }
+            }
 
             val result = project.service<DebugDataProvider>().buildProject(names, rebuild, withoutDeps)
                 ?: return@addTool text("Backend not connected for '${project.name}'.")
