@@ -81,7 +81,8 @@ object BuildTools {
                 val hotReload = runCatching { project.service<DotNetHotReloadManager>() }.getOrNull()
                 if (hotReload != null && hotReload.processes.isNotEmpty()) {
                     val kind = withContext(Dispatchers.EDT) { hotReload.applyChangesIfNeeded() }
-                    return@addTool text("Hot reload (live session, ${hotReload.processes.size} process(es)): $kind")
+                    return@addTool text("[HOT RELOAD · .NET] Applied changes to the live session " +
+                        "(${hotReload.processes.size} process(es)) instead of a cold build → $kind")
                 }
                 // Unreal: Live Coding is the hot-reload equivalent (a cold build is
                 // refused while it's active). Trigger it like Rider's UE build button.
@@ -91,7 +92,8 @@ object BuildTools {
             val result = project.service<DebugDataProvider>().buildProject(names, rebuild, withoutDeps)
                 ?: return@addTool text("Backend not connected for '${project.name}'.")
 
-            text(format(result))
+            val header = if (rebuild) "[BUILD · rebuild]" else "[BUILD · no live hot-reload session]"
+            text("$header\n${format(result)}")
         }
     }
 
@@ -127,7 +129,8 @@ object BuildTools {
                 val signal = model.javaClass.methods.first { it.name == "getTriggerHotReload" }.invoke(model)
                 signal.javaClass.methods.first { it.name == "fire" && it.parameterCount == 1 }.invoke(signal, Unit)
             }
-            "Triggered Unreal Live Coding / Hot Reload for the running session — check the editor's Live Coding tool window/log for results."
+            "[HOT RELOAD · Unreal Live Coding] Triggered a live patch on the running editor " +
+                "instead of a cold build — results appear in the editor's Live Coding tool window/log."
         }.getOrNull()
     }
 
