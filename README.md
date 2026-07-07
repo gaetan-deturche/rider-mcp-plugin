@@ -111,7 +111,7 @@ Prerequisites:
 ```
 
 A full `buildPlugin` has been verified end-to-end locally (frontend Kotlin +
-.NET backend compile; the 0.3.0 zip assembles with the backend dll bundled).
+.NET backend compile; the 0.4.0 zip assembles with the backend dll bundled).
 
 ## Updating to a new Rider version
 
@@ -157,8 +157,8 @@ validation is local `./gradlew buildPlugin`.**
 
 ```bash
 # bump pluginVersion in gradle.properties first, then:
-git tag v0.3.0
-git push origin v0.3.0      # any tag triggers the build
+git tag v0.4.0
+git push origin v0.4.0      # any tag triggers the build
 ```
 
 **Build on demand without tagging:** Bitbucket → *Pipelines → Run pipeline →
@@ -173,7 +173,7 @@ note pipeline artifacts expire after 14 days).
 via the version-pinned raw URL:
 
 ```
-https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.3.0.zip
+https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.4.0.zip
 ```
 
 The filename carries the version, so the link is stable across releases. When
