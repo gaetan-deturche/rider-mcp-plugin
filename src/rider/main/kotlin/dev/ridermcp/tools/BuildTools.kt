@@ -56,14 +56,14 @@ object BuildTools {
                     })
                     put("solution", buildJsonObject {
                         put("type", "string")
-                        put("description", "Optional: target solution name when several are open.")
+                        put("description", "Target solution name or path; required when several solutions are open in one Rider instance.")
                     })
                 },
                 required = listOf("projects"),
             ),
         ) { request ->
             val project = resolveProject(request.arguments.stringArg("solution"))
-                ?: return@addTool text("No matching open solution.")
+                ?: return@addTool noSolution()
 
             val names = request.arguments.stringListArg("projects")
             if (names.isEmpty()) return@addTool text("'projects' is required (one or more project names).")

@@ -314,11 +314,10 @@ object DebuggerTools {
     }
 
     private fun text(s: String) = CallToolResult(content = listOf(TextContent(s)))
-    private fun noSolution() = text("No matching open solution.")
     private fun noSuspended() = text("No suspended debug session. Start debugging and hit a breakpoint first.")
 
     private fun solutionOnlyProps() = buildJsonObject { put("solution", solutionProp()) }
-    private fun solutionProp() = strProp("Optional: target solution name when several are open.")
+    private fun solutionProp() = strProp("Target solution name or path; required when several solutions are open in one Rider instance.")
     private fun strProp(desc: String) = buildJsonObject { put("type", "string"); put("description", desc) }
     private fun numProp(desc: String) = buildJsonObject { put("type", "number"); put("description", desc) }
 }

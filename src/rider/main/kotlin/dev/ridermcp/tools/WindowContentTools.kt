@@ -250,11 +250,8 @@ object WindowContentTools {
         if (text.length <= maxChars) text
         else "…[truncated ${text.length - maxChars} earlier chars]\n" + text.takeLast(maxChars)
 
-    private fun noSolution() =
-        CallToolResult(content = listOf(TextContent("No matching open solution.")))
-
     private fun solutionOnlyProps() = buildJsonObject { put("solution", solutionProp()) }
-    private fun solutionProp() = strProp("Optional: target solution name when several are open.")
+    private fun solutionProp() = strProp("Target solution name or path; required when several solutions are open in one Rider instance.")
     private fun offsetProp() = numProp("Optional: 0-based start line; negative counts from the end (e.g. -100 = last 100 lines).")
     private fun countProp() = numProp("Optional: number of lines to return from offset.")
     private fun strProp(desc: String) = buildJsonObject { put("type", "string"); put("description", desc) }

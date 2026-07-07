@@ -23,13 +23,13 @@ object DiagnosticsTools {
                 properties = buildJsonObject {
                     put("solution", buildJsonObject {
                         put("type", "string")
-                        put("description", "Optional: target solution name when several are open.")
+                        put("description", "Target solution name or path; required when several solutions are open in one Rider instance.")
                     })
                 },
             ),
         ) { request ->
             val project = resolveProject(request.arguments.stringArg("solution"))
-                ?: return@addTool CallToolResult(content = listOf(TextContent("No matching open solution.")))
+                ?: return@addTool noSolution()
 
             val status = project.service<DebugDataProvider>().backendStatus()
             val text = if (status == null) {
