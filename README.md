@@ -142,43 +142,36 @@ Reference: the 243 → 261 migration commit shows the exact set of changes.
 
 ## Releasing / CI
 
-CI runs on **Bitbucket Pipelines** (`bitbucket-pipelines.yml`) and builds the
-full plugin (frontend + .NET backend), uploading the `.zip` as a pipeline
-artifact.
+CI is **GitHub Actions** (`.github/workflows/ci.yml`). It builds the full plugin
+(frontend + .NET backend) on **every push, PR, and tag** — installs .NET 8 +
+`libicu` (a hard .NET runtime dep the slim image lacks), runs `:protocol:rdgen`
+then `buildPlugin`, caches the Gradle deps (incl. the multi-GB Rider SDK) via
+`actions/cache`, and uploads the `.zip` as a build **artifact** (from the run
+page; artifacts expire ~90 days). Day-to-day validation is still local
+`./gradlew buildPlugin`.
 
-It is **tag-only**, not per-push. The Rider SDK is multi-GB and can't be cached
-on Bitbucket Cloud — the gradle cache is ~6.2 GiB compressed, over the **1 GiB**
-upload limit, so it's discarded every run (and attempting to upload it wastes
-~10 min compressing first). So there's no gradle cache, every build re-downloads
-the SDK, and we only pay that cost when cutting a release. **Day-to-day
-validation is local `./gradlew buildPlugin`.**
+On a **tag push** it *also* publishes a **GitHub Release** with the built `.zip`
+attached (`softprops/action-gh-release`; the job grants `contents: write`).
 
 **Cut a release:**
 
 ```bash
-# bump pluginVersion in gradle.properties first, then:
+# bump pluginVersion in gradle.properties AND serverInfo in McpHttpServer.kt
+# (update README refs), commit, then:
 git tag v0.4.0
-git push origin v0.4.0      # any tag triggers the build
+git push origin v0.4.0      # CI builds and publishes the GitHub Release with the zip
 ```
 
-**Build on demand without tagging:** Bitbucket → *Pipelines → Run pipeline →
-custom: `build`*.
+**Build on demand:** GitHub → *Actions → Build plugin → Run workflow*
+(`workflow_dispatch`).
 
-The build step installs .NET 8 and `libicu` (a hard .NET runtime dep the slim
-Temurin image lacks), runs `:protocol:rdgen`, then `buildPlugin`. The publishable
-zip lands in `build/distributions/` (downloadable from the run's *Artifacts* —
-note pipeline artifacts expire after 14 days).
-
-**Download a release.** Each release zip is committed under `dist/` and served
-via the version-pinned raw URL:
+**Download a release.** Prefer the **GitHub Release** assets (stable per-tag
+permalink). A copy may also be committed under `dist/` for a version-pinned raw
+URL, e.g.:
 
 ```
 https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.4.0.zip
 ```
-
-The filename carries the version, so the link is stable across releases. When
-cutting a release: drop the new `build/distributions/*.zip` into `dist/`, commit
-it, then tag.
 
 ## Status / TODO
 
