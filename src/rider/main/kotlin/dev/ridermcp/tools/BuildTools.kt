@@ -38,7 +38,8 @@ object BuildTools {
                 "errors/warnings with file:line. If a hot-reload session is already running, it " +
                 "instead applies changes live (like the toolbar 'Apply Changes' button) unless " +
                 "rebuild=true — .NET Hot Reload for .NET runs, or Unreal Live Coding for a running " +
-                "UE editor. Use get_solution_projects to discover project names.",
+                "UE editor. Use get_solution_projects to discover project names. A cold build runs in " +
+                "the background: this returns a buildId immediately — poll build_status until it completes.",
             inputSchema = toolSchema(
                 properties = buildJsonObject {
                     put("projects", buildJsonObject {
@@ -89,12 +90,50 @@ object BuildTools {
                 tryUnrealHotReload(project)?.let { return@addTool text(it) }
             }
 
-            val result = project.service<DebugDataProvider>().buildProject(names, rebuild, withoutDeps)
+            // Cold build: kick it off and return a handle immediately — a build can
+            // run for minutes, so we never block the MCP call. Poll build_status.
+            val start = project.service<DebugDataProvider>().startBuildProject(names, rebuild, withoutDeps)
                 ?: return@addTool text("Backend not connected for '${project.name}'.")
-
-            val header = if (rebuild) "[BUILD · rebuild]" else "[BUILD · no live hot-reload session]"
-            text("$header\n${format(result)}")
+            if (start.buildId.isEmpty()) return@addTool text(start.errorMessage ?: "Build could not start.")
+            val mode = if (rebuild) "rebuild" else "no live hot-reload session"
+            text("[BUILD · started · $mode] buildId=${start.buildId} — building ${names.joinToString(", ")}. " +
+                "Poll build_status with this buildId (~every 3s) until it reports completed.")
         }
+
+        server.addTool(
+            name = "build_status",
+            description = "Reports the status of a build started by build_project, by its buildId. " +
+                "Returns whether it's still running, or the final result (success + errors/warnings " +
+                "with file:line). Poll ~every 3s until it reports done.",
+            inputSchema = toolSchema(
+                properties = buildJsonObject {
+                    put("buildId", buildJsonObject {
+                        put("type", "string")
+                        put("description", "The buildId returned by build_project.")
+                    })
+                    put("solution", buildJsonObject {
+                        put("type", "string")
+                        put("description", "Target solution name or path; required when several solutions are open in one Rider instance.")
+                    })
+                },
+                required = listOf("buildId"),
+            ),
+        ) { request ->
+            val project = resolveProject(request.arguments.stringArg("solution"))
+                ?: return@addTool noSolution()
+            val buildId = request.arguments.stringArg("buildId").orEmpty()
+            if (buildId.isBlank()) return@addTool text("'buildId' is required (from build_project).")
+
+            val status = project.service<DebugDataProvider>().getBuildStatus(buildId)
+                ?: return@addTool text("Backend not connected for '${project.name}'.")
+            text(formatStatus(status))
+        }
+    }
+
+    private fun formatStatus(r: BuildProjectResult): String {
+        r.errorMessage?.let { return it }   // e.g. unknown buildId
+        if (!r.completed) return "[BUILD · running] buildId=${r.buildId} — still building…"
+        return "[BUILD · done] buildId=${r.buildId}\n${format(r)}"
     }
 
     /**

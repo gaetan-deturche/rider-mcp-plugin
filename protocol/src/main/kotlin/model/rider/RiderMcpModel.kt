@@ -48,8 +48,17 @@ object RiderMcpModel : Ext(SolutionModel.Solution) {
         field("withoutDependencies", bool)     // build only the named project(s)
     }
 
-    // The outcome of a build request.
+    // Returned by startBuildProject: the handle to poll, or an error if it
+    // couldn't even start (e.g. no matching project).
+    private val BuildStartResult = structdef {
+        field("buildId", string)               // empty when the build couldn't start
+        field("errorMessage", string.nullable)
+    }
+
+    // A snapshot of a build's status/outcome, polled via getBuildStatus.
     private val BuildProjectResult = structdef {
+        field("completed", bool)               // false while the build is still running
+        field("buildId", string)
         field("succeeded", bool)
         field("hasErrors", bool)
         field("hasWarnings", bool)
@@ -57,7 +66,7 @@ object RiderMcpModel : Ext(SolutionModel.Solution) {
         field("skipped", bool)                 // up-to-date / nothing to build
         field("builtProjects", immutableList(string))
         field("problems", immutableList(BuildProblem))
-        field("errorMessage", string.nullable) // set when the request couldn't start
+        field("errorMessage", string.nullable) // set on error (e.g. unknown buildId)
     }
 
     init {
@@ -67,9 +76,13 @@ object RiderMcpModel : Ext(SolutionModel.Solution) {
         // Frontend -> backend: ask for a status snapshot.
         call("getBackendStatus", void, BackendStatus.nullable)
 
-        // Frontend -> backend: build specific project(s). Long-running; the
-        // backend answers asynchronously (RdTask) once the build completes.
-        call("buildProject", BuildProjectParams, BuildProjectResult.nullable)
+        // Frontend -> backend: start building specific project(s). Returns
+        // immediately with a buildId (the build runs in the background) so the
+        // MCP call never blocks for the whole build; poll getBuildStatus.
+        call("startBuildProject", BuildProjectParams, BuildStartResult.nullable)
+
+        // Frontend -> backend: poll a running/finished build by its buildId.
+        call("getBuildStatus", string, BuildProjectResult.nullable)
 
         // Backend -> frontend: pushed whenever backend readiness changes, so the
         // MCP layer can reflect liveness without polling.

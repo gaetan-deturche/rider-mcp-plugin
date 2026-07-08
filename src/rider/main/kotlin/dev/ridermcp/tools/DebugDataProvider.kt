@@ -10,6 +10,7 @@ import com.jetbrains.rider.projectView.solution
 import dev.ridermcp.model.BackendStatus
 import dev.ridermcp.model.BuildProjectParams
 import dev.ridermcp.model.BuildProjectResult
+import dev.ridermcp.model.BuildStartResult
 import dev.ridermcp.model.RiderMcpModel
 import dev.ridermcp.model.riderMcpModel
 import kotlinx.coroutines.Dispatchers
@@ -39,16 +40,21 @@ class DebugDataProvider(private val project: Project) : Disposable {
     }
 
     /**
-     * Builds the named project(s) via the backend and suspends until the build
-     * finishes. Returns null if the backend isn't connected.
+     * Starts building the named project(s) and returns immediately with a build
+     * handle (the build runs in the background). Poll [getBuildStatus] with the
+     * returned buildId. Returns null if the backend isn't connected.
      */
-    suspend fun buildProject(projectNames: List<String>, rebuild: Boolean, withoutDependencies: Boolean): BuildProjectResult? =
+    suspend fun startBuildProject(projectNames: List<String>, rebuild: Boolean, withoutDependencies: Boolean): BuildStartResult? =
         callBackend { model ->
-            model.buildProject.startSuspending(
+            model.startBuildProject.startSuspending(
                 lifetimeDef.lifetime,
                 BuildProjectParams(projectNames, rebuild, withoutDependencies),
             )
         }
+
+    /** Snapshot of a build's status by buildId, or null if the backend isn't connected. */
+    suspend fun getBuildStatus(buildId: String): BuildProjectResult? =
+        callBackend { model -> model.getBuildStatus.startSuspending(lifetimeDef.lifetime, buildId) }
 
     /**
      * Switches to the protocol scheduler (EDT), resolves the bound model for
