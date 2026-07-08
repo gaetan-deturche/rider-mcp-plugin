@@ -1,7 +1,7 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
 using JetBrains.Application.Parts;
 using JetBrains.Lifetimes;
 using JetBrains.Platform.BuildEvents;                      // BuildEvent (resolved diagnostic)
@@ -28,6 +28,11 @@ namespace RiderMcp
     [SolutionComponent(Instantiation.ContainerAsyncPrimaryThread)]
     public class RiderMcpHost
     {
+        // Builds started via startBuildProject, keyed by buildId, so getBuildStatus
+        // can poll them. A build is removed once its terminal status has been read.
+        private readonly ConcurrentDictionary<string, SolutionBuilderRequest> myBuilds =
+            new ConcurrentDictionary<string, SolutionBuilderRequest>();
+
         public RiderMcpHost(Lifetime lifetime, ISolution solution)
         {
             var model = solution.GetProtocolSolution().GetRiderMcpModel();
@@ -37,11 +42,12 @@ namespace RiderMcp
             // built synchronously and cheaply.
             model.GetBackendStatus.SetSync((_, _) => BuildStatus(solution));
 
-            // Frontend -> backend: build specific project(s). A build is
-            // long-running, so this is async — the handler awaits the build
-            // completion (bridged from the ISolutionBuilder callback) and only
-            // then returns the result to the frontend.
-            model.BuildProject.SetAsync((callLifetime, request) => BuildProjectAsync(solution, callLifetime, request));
+            // Build specific project(s). A build can run for minutes, so we DON'T
+            // block the RD call for its duration (the frontend/proxy would time
+            // out). startBuildProject kicks the build and returns a buildId
+            // immediately; getBuildStatus polls that build. Both are cheap/sync.
+            model.StartBuildProject.SetSync((_, request) => StartBuild(solution, request));
+            model.GetBuildStatus.SetSync((_, buildId) => GetBuildStatus(buildId));
 
             // Backend -> frontend liveness signal.
             model.BackendReadyChanged.Fire(true);
@@ -49,11 +55,12 @@ namespace RiderMcp
         }
 
         /// <summary>
-        /// Builds the requested project(s) through Rider's own build engine
-        /// (<see cref="ISolutionBuilder"/>) — the same path as "Build Selected
-        /// Project" — and reports success plus any errors/warnings.
+        /// Kicks a build of the requested project(s) through Rider's own build
+        /// engine (<see cref="ISolutionBuilder"/>) — the same path as "Build
+        /// Selected Project" — and returns a buildId to poll (the build runs in
+        /// the background). Returns an empty buildId + message if it can't start.
         /// </summary>
-        private static async Task<BuildProjectResult> BuildProjectAsync(ISolution solution, Lifetime callLifetime, BuildProjectParams request)
+        private BuildStartResult StartBuild(ISolution solution, BuildProjectParams request)
         {
             IEnumerable<IProject> allProjects = solution.GetAllProjects();
 
@@ -68,8 +75,7 @@ namespace RiderMcp
             if (requested.Count == 0)
             {
                 string available = string.Join(", ", allProjects.Select(p => p.Name).OrderBy(n => n));
-                return new BuildProjectResult(false, false, false, false, false,
-                    new List<string>(), new List<BuildProblem>(),
+                return new BuildStartResult("",
                     $"No project matched [{string.Join(", ", request.ProjectNames)}]. Available projects: {available}");
             }
 
@@ -85,45 +91,56 @@ namespace RiderMcp
             SolutionBuilderRequest buildRequest = builder.CreateBuildRequest(
                 target, requested, SolutionBuilderRequestSilentMode.Silent, settings);
 
-            TaskCompletionSource<BuildProjectResult> completion = new TaskCompletionSource<BuildProjectResult>();
-            buildRequest.ContinueWith(callLifetime, r => completion.TrySetResult(ToResult(r)));
-            // If the frontend cancels the call before the build finishes, don't hang.
-            callLifetime.OnTermination(() => completion.TrySetResult(new BuildProjectResult(
-                false, false, false, true, false, new List<string>(), new List<BuildProblem>(), "Build was cancelled.")));
-
-            builder.ExecuteBuildRequest(buildRequest);
-            return await completion.Task;
+            string buildId = Guid.NewGuid().ToString();
+            myBuilds[buildId] = buildRequest;
+            builder.ExecuteBuildRequest(buildRequest); // non-blocking: the build runs in the background
+            return new BuildStartResult(buildId, null);
         }
 
-        /// <summary>Maps a completed build request to the RD result struct.</summary>
-        private static BuildProjectResult ToResult(SolutionBuilderRequest r)
+        /// <summary>Snapshots a build's status by buildId (running or final result).</summary>
+        private BuildProjectResult GetBuildStatus(string buildId)
         {
-            List<BuildProblem> problems = new List<BuildProblem>();
-            try
+            if (!myBuilds.TryGetValue(buildId, out var r))
             {
-                // Errors are recorded as offsets into the request's event storage;
-                // the session loader resolves each to a full diagnostic.
-                if (r.SessionLoader is InFileBuildSessionLoader loader)
+                return new BuildProjectResult(true, buildId, false, false, false, false, false,
+                    new List<string>(), new List<BuildProblem>(), $"Unknown buildId '{buildId}'.");
+            }
+
+            bool completed = r.State.Value.HasFlag(BuildRunState.Completed);
+
+            List<BuildProblem> problems = new List<BuildProblem>();
+            if (completed)
+            {
+                try
                 {
-                    foreach (BuildEventReference reference in r.GetAllBuildErrors())
+                    // Errors are offsets into the request's event storage; the
+                    // session loader resolves each to a full diagnostic.
+                    if (r.SessionLoader is InFileBuildSessionLoader loader)
                     {
-                        BuildEvent ev = loader.LoadEvent(reference.Offset);
-                        if (ev == null) continue;
-                        string? projectName = reference.ProjectId.HasValue ? r.GetProjectById(reference.ProjectId)?.Name : null;
-                        problems.Add(new BuildProblem(ev.Kind.ToString(), ev.Message ?? string.Empty,
-                            ev.Code, ev.FilePath, ev.Line, ev.Column, projectName));
+                        foreach (BuildEventReference reference in r.GetAllBuildErrors())
+                        {
+                            BuildEvent ev = loader.LoadEvent(reference.Offset);
+                            if (ev == null) continue;
+                            string? projectName = reference.ProjectId.HasValue ? r.GetProjectById(reference.ProjectId)?.Name : null;
+                            problems.Add(new BuildProblem(ev.Kind.ToString(), ev.Message ?? string.Empty,
+                                ev.Code, ev.FilePath, ev.Line, ev.Column, projectName));
+                        }
                     }
                 }
-            }
-            catch
-            {
-                // Diagnostic resolution is best-effort; the flags below are authoritative.
+                catch
+                {
+                    // Diagnostic resolution is best-effort; the flags below are authoritative.
+                }
             }
 
             List<string> built = r.RequestedProjects.Select(p => p.Project.Name).ToList();
-            return new BuildProjectResult(
-                r.Succeeded.Value, r.HasErrors.Value, r.HasWarnings.Value,
-                r.HasCancelled.Value, r.Skipped.Value, built, problems, null);
+            BuildProjectResult result = new BuildProjectResult(
+                completed, buildId,
+                r.Succeeded.Value, r.HasErrors.Value, r.HasWarnings.Value, r.HasCancelled.Value, r.Skipped.Value,
+                built, problems, null);
+
+            if (completed) myBuilds.TryRemove(buildId, out _); // free the entry once its terminal status is read
+            return result;
         }
 
         private static BackendStatus BuildStatus(ISolution solution)

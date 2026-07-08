@@ -111,7 +111,7 @@ Prerequisites:
 ```
 
 A full `buildPlugin` has been verified end-to-end locally (frontend Kotlin +
-.NET backend compile; the 0.4.0 zip assembles with the backend dll bundled).
+.NET backend compile; the 0.5.0 zip assembles with the backend dll bundled).
 
 ## Updating to a new Rider version
 
@@ -158,8 +158,8 @@ attached (`softprops/action-gh-release`; the job grants `contents: write`).
 ```bash
 # bump pluginVersion in gradle.properties AND serverInfo in McpHttpServer.kt
 # (update README refs), commit, then:
-git tag v0.4.0
-git push origin v0.4.0      # CI builds and publishes the GitHub Release with the zip
+git tag v0.5.0
+git push origin v0.5.0      # CI builds and publishes the GitHub Release with the zip
 ```
 
 **Build on demand:** GitHub → *Actions → Build plugin → Run workflow*
@@ -170,7 +170,7 @@ permalink). A copy may also be committed under `dist/` for a version-pinned raw
 URL, e.g.:
 
 ```
-https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.4.0.zip
+https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.5.0.zip
 ```
 
 ## Status / TODO
