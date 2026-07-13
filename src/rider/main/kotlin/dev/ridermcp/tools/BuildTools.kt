@@ -128,6 +128,35 @@ object BuildTools {
                 ?: return@addTool text("Backend not connected for '${project.name}'.")
             text(formatStatus(status))
         }
+
+        server.addTool(
+            name = "cancel_build",
+            description = "Cancels a running build started by build_project. Omit buildId to cancel the " +
+                "single build currently in progress; pass buildId to target a specific one (required when " +
+                "several are running). The abort is asynchronous — poll build_status until it reports " +
+                "completed/cancelled.",
+            inputSchema = toolSchema(
+                properties = buildJsonObject {
+                    put("buildId", buildJsonObject {
+                        put("type", "string")
+                        put("description", "The buildId returned by build_project. Omit to cancel the current in-flight build.")
+                    })
+                    put("solution", buildJsonObject {
+                        put("type", "string")
+                        put("description", "Target solution name or path; required when several solutions are open in one Rider instance.")
+                    })
+                },
+            ),
+        ) { request ->
+            val project = resolveProject(request.arguments.stringArg("solution"))
+                ?: return@addTool noSolution()
+            val buildId = request.arguments.stringArg("buildId").orEmpty()
+            val result = project.service<DebugDataProvider>().cancelBuild(buildId)
+                ?: return@addTool text("Backend not connected for '${project.name}'.")
+            result.errorMessage?.let { return@addTool text(it) }
+            text("[CANCEL requested] buildId=${result.buildId} — abort sent to the running build. " +
+                "Poll build_status with this buildId (~every 3s) until it reports completed/cancelled.")
+        }
     }
 
     private fun formatStatus(r: BuildProjectResult): String {

@@ -84,6 +84,10 @@ object RiderMcpModel : Ext(SolutionModel.Solution) {
         // Frontend -> backend: poll a running/finished build by its buildId.
         call("getBuildStatus", string, BuildProjectResult.nullable)
 
+        // Frontend -> backend: cancel a running build by buildId, or the
+        // single in-flight build when the id is empty (resolved on the backend).
+        call("cancelBuild", string, BuildProjectResult.nullable)
+
         // Backend -> frontend: pushed whenever backend readiness changes, so the
         // MCP layer can reflect liveness without polling.
         signal("backendReadyChanged", bool)

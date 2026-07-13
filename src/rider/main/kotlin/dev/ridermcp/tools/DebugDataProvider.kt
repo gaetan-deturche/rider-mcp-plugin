@@ -57,6 +57,14 @@ class DebugDataProvider(private val project: Project) : Disposable {
         callBackend { model -> model.getBuildStatus.startSuspending(lifetimeDef.lifetime, buildId) }
 
     /**
+     * Requests cancellation of a running build. Pass a buildId, or "" to cancel
+     * the single in-flight build (resolved on the backend). Returns the backend's
+     * result (errorMessage set when it could not cancel), or null if not connected.
+     */
+    suspend fun cancelBuild(buildId: String): BuildProjectResult? =
+        callBackend { model -> model.cancelBuild.startSuspending(lifetimeDef.lifetime, buildId) }
+
+    /**
      * Switches to the protocol scheduler (EDT), resolves the bound model for
      * this solution, and runs [block]. Returns null when the solution has no
      * RiderMcp model bound yet (backend still starting / not a Rider solution).
