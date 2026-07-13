@@ -48,6 +48,7 @@ namespace RiderMcp
             // immediately; getBuildStatus polls that build. Both are cheap/sync.
             model.StartBuildProject.SetSync((_, request) => StartBuild(solution, request));
             model.GetBuildStatus.SetSync((_, buildId) => GetBuildStatus(buildId));
+            model.CancelBuild.SetSync((_, buildId) => CancelBuild(solution, buildId));
 
             // Backend -> frontend liveness signal.
             model.BackendReadyChanged.Fire(true);
@@ -101,11 +102,62 @@ namespace RiderMcp
         private BuildProjectResult GetBuildStatus(string buildId)
         {
             if (!myBuilds.TryGetValue(buildId, out var r))
+                return NotFound(buildId);
+
+            BuildProjectResult result = Snapshot(buildId, r);
+            if (result.Completed) myBuilds.TryRemove(buildId, out _); // free the entry once its terminal status is read
+            return result;
+        }
+
+        /// <summary>
+        /// Requests cancellation of a running build: the one with <paramref name="buildId"/>,
+        /// or — when buildId is empty — the single build currently in progress. Returns an
+        /// error result when there is nothing unambiguous to cancel. The abort is
+        /// asynchronous, so the returned snapshot may still show the build running/cancelling;
+        /// poll getBuildStatus for the terminal (cancelled) state.
+        /// </summary>
+        private BuildProjectResult CancelBuild(ISolution solution, string buildId)
+        {
+            SolutionBuilderRequest r;
+            string id;
+            if (!string.IsNullOrEmpty(buildId))
             {
-                return new BuildProjectResult(true, buildId, false, false, false, false, false,
-                    new List<string>(), new List<BuildProblem>(), $"Unknown buildId '{buildId}'.");
+                if (!myBuilds.TryGetValue(buildId, out var found)) return NotFound(buildId);
+                r = found;
+                id = buildId;
+            }
+            else
+            {
+                var running = myBuilds
+                    .Where(kv => !kv.Value.State.Value.HasFlag(BuildRunState.Completed))
+                    .ToList();
+                if (running.Count == 0) return Error("", "No build is in progress.");
+                if (running.Count > 1)
+                    return Error("", "Several builds are in progress — pass an explicit buildId: " +
+                        string.Join(", ", running.Select(kv => kv.Key)));
+                r = running[0].Value;
+                id = running[0].Key;
             }
 
+            if (r.State.Value.HasFlag(BuildRunState.Completed))
+                return Error(id, $"Build '{id}' has already finished; nothing to cancel.");
+
+            // Aborts the currently running build request (documented behaviour of Abort()).
+            solution.GetComponent<ISolutionBuilder>().Abort();
+            return Snapshot(id, r);
+        }
+
+        private static BuildProjectResult NotFound(string buildId) =>
+            new BuildProjectResult(true, buildId, false, false, false, false, false,
+                new List<string>(), new List<BuildProblem>(), $"Unknown buildId '{buildId}'.");
+
+        private static BuildProjectResult Error(string buildId, string message) =>
+            new BuildProjectResult(true, buildId, false, false, false, false, false,
+                new List<string>(), new List<BuildProblem>(), message);
+
+        /// <summary>Builds a status snapshot for a tracked build request (no side effects).</summary>
+        private static BuildProjectResult Snapshot(string buildId, SolutionBuilderRequest r)
+        {
             bool completed = r.State.Value.HasFlag(BuildRunState.Completed);
 
             List<BuildProblem> problems = new List<BuildProblem>();
@@ -134,13 +186,10 @@ namespace RiderMcp
             }
 
             List<string> built = r.RequestedProjects.Select(p => p.Project.Name).ToList();
-            BuildProjectResult result = new BuildProjectResult(
+            return new BuildProjectResult(
                 completed, buildId,
                 r.Succeeded.Value, r.HasErrors.Value, r.HasWarnings.Value, r.HasCancelled.Value, r.Skipped.Value,
                 built, problems, null);
-
-            if (completed) myBuilds.TryRemove(buildId, out _); // free the entry once its terminal status is read
-            return result;
         }
 
         private static BackendStatus BuildStatus(ISolution solution)
