@@ -1,10 +1,17 @@
 package dev.ridermcp.tools
 
+import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.runWriteAction
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.ColoredTextContainer
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.xdebugger.XDebugSession
 import com.intellij.xdebugger.XDebuggerManager
+import com.intellij.xdebugger.XDebuggerUtil
+import com.intellij.xdebugger.breakpoints.SuspendPolicy
+import com.intellij.xdebugger.breakpoints.XLineBreakpoint
+import com.intellij.xdebugger.impl.breakpoints.XExpressionImpl
 import com.intellij.xdebugger.evaluation.XDebuggerEvaluator
 import com.intellij.xdebugger.frame.XCompositeNode
 import com.intellij.xdebugger.frame.XExecutionStack
@@ -20,6 +27,8 @@ import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -47,6 +56,9 @@ object DebuggerTools {
         registerLocals(server)
         registerEvaluate(server)
         registerBreakpoints(server)
+        registerSetBreakpoint(server)
+        registerRemoveBreakpoint(server)
+        registerUpdateBreakpoint(server)
     }
 
     // -- debug_status --------------------------------------------------------
@@ -172,23 +184,180 @@ object DebuggerTools {
     private fun registerBreakpoints(server: Server) {
         server.addTool(
             name = "list_breakpoints",
-            description = "Lists all breakpoints (type, location, enabled, condition). Works " +
-                "without a running session.",
+            description = "Lists all breakpoints with an index, location (file:line for line " +
+                "breakpoints), enabled state and condition. Works without a running session.",
             inputSchema = toolSchema(properties = solutionOnlyProps()),
         ) { request ->
             val project = resolveProject(request.arguments.stringArg("solution")) ?: return@addTool noSolution()
             val bps = XDebuggerManager.getInstance(project).breakpointManager.allBreakpoints
-            val text = bps.joinToString("\n") { bp ->
+            val text = bps.mapIndexed { i, bp ->
                 val enabled = if (bp.isEnabled) "[x]" else "[ ]"
                 val cond = bp.conditionExpression?.expression?.let { "  if ($it)" } ?: ""
-                @Suppress("UNCHECKED_CAST")
-                val loc = runCatching { (bp.type as com.intellij.xdebugger.breakpoints.XBreakpointType<com.intellij.xdebugger.breakpoints.XBreakpoint<*>, *>).getDisplayText(bp) }
-                    .getOrNull() ?: bp.type.title
-                "$enabled $loc$cond"
-            }.ifEmpty { "(no breakpoints)" }
+                val loc = (bp as? XLineBreakpoint<*>)?.let { "${it.fileUrl.substringAfterLast('/')}:${it.line + 1}" }
+                    ?: runCatching {
+                        @Suppress("UNCHECKED_CAST")
+                        (bp.type as com.intellij.xdebugger.breakpoints.XBreakpointType<com.intellij.xdebugger.breakpoints.XBreakpoint<*>, *>).getDisplayText(bp)
+                    }.getOrNull() ?: bp.type.title
+                "[$i] $enabled $loc$cond"
+            }.joinToString("\n").ifEmpty { "(no breakpoints)" }
             text(text)
         }
     }
+
+    // -- set_breakpoint ------------------------------------------------------
+
+    private fun registerSetBreakpoint(server: Server) {
+        server.addTool(
+            name = "set_breakpoint",
+            description = "Sets a line breakpoint at file:line. No running session is needed — it " +
+                "binds when you next debug (pairs with run_configuration). 'line' is 1-based, matching " +
+                "the editor gutter. Language-agnostic (C#, C++/Unreal, …). See list_breakpoints for " +
+                "existing ones. Pass an optional condition to break only when it is true.",
+            inputSchema = toolSchema(
+                properties = buildJsonObject {
+                    put("file", strProp("Absolute path to the source file."))
+                    put("line", numProp("1-based line number, as shown in the editor gutter."))
+                    put("condition", strProp("Optional: break only when this expression is true."))
+                    put("solution", solutionProp())
+                },
+                required = listOf("file", "line"),
+            ),
+        ) { request ->
+            val project = resolveProject(request.arguments.stringArg("solution")) ?: return@addTool noSolution()
+            val path = request.arguments.stringArg("file")?.trim().orEmpty()
+            if (path.isEmpty()) return@addTool text("'file' is required (absolute path).")
+            val line = request.arguments.intArg("line") ?: return@addTool text("'line' is required (1-based).")
+            if (line < 1) return@addTool text("'line' must be >= 1.")
+            val file = LocalFileSystem.getInstance().refreshAndFindFileByPath(path.replace('\\', '/'))
+                ?: return@addTool text("File not found: $path")
+            val line0 = line - 1
+
+            withContext(Dispatchers.EDT) {
+                val util = XDebuggerUtil.getInstance()
+                if (!util.canPutBreakpointAt(project, file, line0))
+                    return@withContext text("Can't place a breakpoint at ${file.name}:$line.")
+                val bpm = XDebuggerManager.getInstance(project).breakpointManager
+                val already = bpm.allBreakpoints
+                    .filterIsInstance<XLineBreakpoint<*>>()
+                    .any { it.fileUrl == file.url && it.line == line0 }
+                if (already) return@withContext text("Breakpoint already set at ${file.name}:$line.")
+                util.toggleLineBreakpoint(project, file, line0)
+                val condition = request.arguments.stringArg("condition")?.trim().orEmpty()
+                var condNote = ""
+                if (condition.isNotEmpty()) {
+                    val bp = bpm.allBreakpoints.filterIsInstance<XLineBreakpoint<*>>()
+                        .firstOrNull { it.fileUrl == file.url && it.line == line0 }
+                    if (bp != null) {
+                        runWriteAction { bp.conditionExpression = XExpressionImpl.fromText(condition) }
+                        condNote = "  if ($condition)"
+                    }
+                }
+                text("[BREAKPOINT set] ${file.name}:$line$condNote  ($path)")
+            }
+        }
+    }
+
+    // -- remove_breakpoint ---------------------------------------------------
+
+    private fun registerRemoveBreakpoint(server: Server) {
+        server.addTool(
+            name = "remove_breakpoint",
+            description = "Removes the line breakpoint at file:line, or every breakpoint when " +
+                "all=true. 'line' is 1-based. Use list_breakpoints to see what is set.",
+            inputSchema = toolSchema(
+                properties = buildJsonObject {
+                    put("file", strProp("Absolute path to the source file (omit when all=true)."))
+                    put("line", numProp("1-based line number (omit when all=true)."))
+                    put("all", boolProp("Remove ALL breakpoints. Default false."))
+                    put("solution", solutionProp())
+                },
+            ),
+        ) { request ->
+            val project = resolveProject(request.arguments.stringArg("solution")) ?: return@addTool noSolution()
+            val bpm = XDebuggerManager.getInstance(project).breakpointManager
+            if (request.arguments.boolArg("all") == true) {
+                val bps = bpm.allBreakpoints.toList()
+                if (bps.isEmpty()) return@addTool text("(no breakpoints to remove)")
+                withContext(Dispatchers.EDT) { runWriteAction { bps.forEach { bpm.removeBreakpoint(it) } } }
+                return@addTool text("[BREAKPOINTS removed] all ${bps.size}.")
+            }
+            val loc = lineTarget(request) ?: return@addTool text("Pass file+line (existing file), or all=true.")
+            val bp = findLineBreakpoint(project, loc.first, loc.second)
+                ?: return@addTool text("No breakpoint at ${loc.first.name}:${loc.second + 1}.")
+            withContext(Dispatchers.EDT) { runWriteAction { bpm.removeBreakpoint(bp) } }
+            text("[BREAKPOINT removed] ${loc.first.name}:${loc.second + 1}.")
+        }
+    }
+
+    // -- update_breakpoint ---------------------------------------------------
+
+    private fun registerUpdateBreakpoint(server: Server) {
+        server.addTool(
+            name = "update_breakpoint",
+            description = "Updates the line breakpoint at file:line: enable/disable, set/clear its " +
+                "condition, and/or whether hitting it suspends execution. 'line' is 1-based. Pass " +
+                "condition=\"\" to clear an existing condition.",
+            inputSchema = toolSchema(
+                properties = buildJsonObject {
+                    put("file", strProp("Absolute path to the source file."))
+                    put("line", numProp("1-based line number."))
+                    put("enabled", boolProp("Optional: enable (true) or disable (false) the breakpoint."))
+                    put("condition", strProp("Optional: condition expression; break only when true. Empty string clears it."))
+                    put("suspend", boolProp("Optional: true = suspend on hit (normal); false = do not suspend."))
+                    put("solution", solutionProp())
+                },
+                required = listOf("file", "line"),
+            ),
+        ) { request ->
+            val project = resolveProject(request.arguments.stringArg("solution")) ?: return@addTool noSolution()
+            val loc = lineTarget(request) ?: return@addTool text("'file' and 'line' are required (and the file must exist).")
+            val bp = findLineBreakpoint(project, loc.first, loc.second)
+                ?: return@addTool text("No breakpoint at ${loc.first.name}:${loc.second + 1}. Use set_breakpoint first.")
+
+            val enabled = request.arguments.boolArg("enabled")
+            val suspend = request.arguments.boolArg("suspend")
+            val condition = request.arguments.stringArg("condition") // null = leave as-is; "" = clear
+            val changes = mutableListOf<String>()
+
+            withContext(Dispatchers.EDT) {
+                runWriteAction {
+                    if (enabled != null) {
+                        bp.isEnabled = enabled
+                        changes.add(if (enabled) "enabled" else "disabled")
+                    }
+                    if (condition != null) {
+                        val c = condition.trim()
+                        if (c.isEmpty()) {
+                            bp.conditionExpression = null
+                            changes.add("condition cleared")
+                        } else {
+                            bp.conditionExpression = XExpressionImpl.fromText(c)
+                            changes.add("condition=if ($c)")
+                        }
+                    }
+                    if (suspend != null) {
+                        bp.suspendPolicy = if (suspend) SuspendPolicy.ALL else SuspendPolicy.NONE
+                        changes.add(if (suspend) "suspend=on" else "suspend=off")
+                    }
+                }
+            }
+            if (changes.isEmpty()) return@addTool text("Nothing to update — pass enabled, condition, and/or suspend.")
+            text("[BREAKPOINT updated] ${loc.first.name}:${loc.second + 1} — ${changes.joinToString(", ")}.")
+        }
+    }
+
+    private fun lineTarget(request: io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest): Pair<com.intellij.openapi.vfs.VirtualFile, Int>? {
+        val path = request.arguments.stringArg("file")?.trim().orEmpty()
+        val line = request.arguments.intArg("line") ?: return null
+        if (path.isEmpty() || line < 1) return null
+        val file = LocalFileSystem.getInstance().refreshAndFindFileByPath(path.replace('\\', '/')) ?: return null
+        return file to (line - 1)
+    }
+
+    private fun findLineBreakpoint(project: Project, file: com.intellij.openapi.vfs.VirtualFile, line0: Int): XLineBreakpoint<*>? =
+        XDebuggerManager.getInstance(project).breakpointManager.allBreakpoints
+            .filterIsInstance<XLineBreakpoint<*>>()
+            .firstOrNull { it.fileUrl == file.url && it.line == line0 }
 
     // -- session / frame resolution ------------------------------------------
 
@@ -320,4 +489,5 @@ object DebuggerTools {
     private fun solutionProp() = strProp("Target solution name or path; required when several solutions are open in one Rider instance.")
     private fun strProp(desc: String) = buildJsonObject { put("type", "string"); put("description", desc) }
     private fun numProp(desc: String) = buildJsonObject { put("type", "number"); put("description", desc) }
+    private fun boolProp(desc: String) = buildJsonObject { put("type", "boolean"); put("description", desc) }
 }

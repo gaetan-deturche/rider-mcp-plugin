@@ -1,10 +1,12 @@
 package dev.ridermcp.tools
 
+import com.intellij.execution.ExecutionManager
 import com.intellij.execution.Executor
 import com.intellij.execution.ProgramRunnerUtil
 import com.intellij.execution.RunManager
 import com.intellij.execution.executors.DefaultDebugExecutor
 import com.intellij.execution.executors.DefaultRunExecutor
+import com.intellij.execution.impl.ExecutionManagerImpl
 import com.intellij.execution.runners.ProgramRunner
 import com.intellij.openapi.application.EDT
 import io.modelcontextprotocol.kotlin.sdk.server.Server
@@ -118,6 +120,56 @@ object RunConfigTools {
                 "[$mode · started] \"$name\" [${settings.type.displayName}] in '${project.name}'. " +
                     "Before-launch build (if any) runs first; watch the Run/Debug tool window."
             )
+        }
+
+        server.addTool(
+            name = "stop_process",
+            description = "Stops running run/debug session(s) — the Stop-button equivalent. Omit 'name' " +
+                "to stop the single running session (errors when several are running); pass 'name' to stop " +
+                "the session(s) whose Run/Debug tab name matches. Pairs with run_configuration.",
+            inputSchema = toolSchema(
+                properties = buildJsonObject {
+                    put("name", buildJsonObject {
+                        put("type", "string")
+                        put("description", "Running session name (the Run/Debug tab title, usually the configuration name). Omit to stop the single running session.")
+                    })
+                    put("solution", buildJsonObject {
+                        put("type", "string")
+                        put("description", "Target solution name or path; required when several solutions are open in one Rider instance.")
+                    })
+                },
+            ),
+        ) { request ->
+            val project = resolveProject(request.arguments.stringArg("solution")) ?: return@addTool noSolution()
+            val name = request.arguments.stringArg("name")?.trim().orEmpty()
+
+            withContext(Dispatchers.EDT) {
+                val em = ExecutionManager.getInstance(project) as? ExecutionManagerImpl
+                    ?: return@withContext text("Execution manager unavailable for '${project.name}'.")
+                val alive = em.getRunningDescriptors { true }
+                    .filter { it.processHandler?.isProcessTerminated == false }
+                if (alive.isEmpty()) return@withContext text("No running session in '${project.name}'.")
+
+                val targets = if (name.isEmpty()) {
+                    if (alive.size > 1)
+                        return@withContext text(
+                            "Several sessions are running — pass 'name' to pick one:\n" +
+                                alive.joinToString("\n") { "  - ${it.displayName}" }
+                        )
+                    alive
+                } else {
+                    val matched = alive.filter { it.displayName.equals(name, ignoreCase = true) }
+                    if (matched.isEmpty())
+                        return@withContext text(
+                            "No running session named \"$name\". Running:\n" +
+                                alive.joinToString("\n") { "  - ${it.displayName}" }
+                        )
+                    matched
+                }
+
+                targets.forEach { ExecutionManagerImpl.stopProcess(it) }
+                text("[STOPPED] " + targets.joinToString(", ") { "\"${it.displayName}\"" } + " in '${project.name}'.")
+            }
         }
     }
 
