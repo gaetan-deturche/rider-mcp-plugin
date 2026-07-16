@@ -2,17 +2,21 @@ package dev.ridermcp.tools
 
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.runWriteAction
+import com.intellij.openapi.fileTypes.LanguageFileType
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.ui.ColoredTextContainer
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.xdebugger.XDebugSession
 import com.intellij.xdebugger.XDebuggerManager
 import com.intellij.xdebugger.XDebuggerUtil
 import com.intellij.xdebugger.breakpoints.SuspendPolicy
+import com.intellij.xdebugger.breakpoints.XBreakpointProperties
 import com.intellij.xdebugger.breakpoints.XLineBreakpoint
+import com.intellij.xdebugger.breakpoints.XLineBreakpointType
 import com.intellij.xdebugger.impl.breakpoints.XBreakpointBase
-import com.intellij.xdebugger.impl.breakpoints.XExpressionImpl
+import com.intellij.xdebugger.evaluation.EvaluationMode
 import com.intellij.xdebugger.evaluation.XDebuggerEvaluator
 import com.intellij.xdebugger.frame.XCompositeNode
 import com.intellij.xdebugger.frame.XExecutionStack
@@ -236,29 +240,40 @@ object DebuggerTools {
             val line0 = line - 1
 
             withContext(Dispatchers.EDT) {
-                val util = XDebuggerUtil.getInstance()
-                if (!util.canPutBreakpointAt(project, file, line0))
-                    return@withContext text("Can't place a breakpoint at ${file.name}:$line.")
                 val bpm = XDebuggerManager.getInstance(project).breakpointManager
-                val already = bpm.allBreakpoints
-                    .filterIsInstance<XLineBreakpoint<*>>()
-                    .any { it.fileUrl == file.url && it.line == line0 }
-                if (already) return@withContext text("Breakpoint already set at ${file.name}:$line.")
-                util.toggleLineBreakpoint(project, file, line0)
                 val condition = request.arguments.stringArg("condition")?.trim().orEmpty()
-                var condNote = ""
-                val bp = bpm.allBreakpoints.filterIsInstance<XLineBreakpoint<*>>()
+
+                // Find-or-create the line breakpoint, then ALWAYS apply the MCP group tag
+                // and condition to it. The previous version returned early on "already set"
+                // (never applying the condition/tag to an existing breakpoint) and relied on
+                // re-finding the breakpoint after toggleLineBreakpoint — which could return
+                // null — so conditions and tags silently failed to land. addLineBreakpoint
+                // returns the created breakpoint directly, removing that race.
+                val existing = bpm.allBreakpoints.filterIsInstance<XLineBreakpoint<*>>()
                     .firstOrNull { it.fileUrl == file.url && it.line == line0 }
-                if (bp != null) {
-                    runWriteAction {
-                        // Tag MCP-created breakpoints so they can be listed/updated/removed as a
-                        // group; `group` is persisted to workspace.xml and shown in the dialog.
-                        (bp as? XBreakpointBase<*, *, *>)?.let { it.group = MCP_GROUP }
-                        if (condition.isNotEmpty()) bp.conditionExpression = XExpressionImpl.fromText(condition)
-                    }
-                    if (condition.isNotEmpty()) condNote = "  if ($condition)"
+                val existed = existing != null
+                @Suppress("UNCHECKED_CAST")
+                val newType: XLineBreakpointType<XBreakpointProperties<*>>? = if (existing == null) {
+                    val util = XDebuggerUtil.getInstance()
+                    if (!util.canPutBreakpointAt(project, file, line0))
+                        return@withContext text("Can't place a breakpoint at ${file.name}:$line.")
+                    (util.lineBreakpointTypes.firstOrNull { it.canPutAt(file, line0, project) }
+                        ?: return@withContext text("No breakpoint type accepts ${file.name}:$line."))
+                        as XLineBreakpointType<XBreakpointProperties<*>>
+                } else null
+
+                val target: XLineBreakpoint<*> = runWriteAction {
+                    val b = existing ?: bpm.addLineBreakpoint(
+                        newType!!, file.url, line0, newType.createBreakpointProperties(file, line0))
+                    // group is persisted to workspace.xml and shown in the Breakpoints dialog.
+                    (b as? XBreakpointBase<*, *, *>)?.let { it.group = MCP_GROUP }
+                    if (condition.isNotEmpty()) b.conditionExpression = conditionFor(b, condition)
+                    b
                 }
-                text("[BREAKPOINT set \u00b7 MCP] ${file.name}:$line$condNote  ($path)")
+
+                val condNote = if (condition.isNotEmpty()) "  if ($condition)" else ""
+                val verb = if (existed) "updated" else "set"
+                text("[BREAKPOINT $verb \u00b7 MCP] ${target.fileUrl.substringAfterLast('/')}:$line$condNote  ($path)")
             }
         }
     }
@@ -347,7 +362,7 @@ object DebuggerTools {
                         if (enabled != null) bp.isEnabled = enabled
                         if (condition != null) {
                             val c = condition.trim()
-                            bp.conditionExpression = if (c.isEmpty()) null else XExpressionImpl.fromText(c)
+                            bp.conditionExpression = if (c.isEmpty()) null else conditionFor(bp, c)
                         }
                         if (suspend != null) bp.suspendPolicy = if (suspend) SuspendPolicy.ALL else SuspendPolicy.NONE
                     }
@@ -417,6 +432,22 @@ object DebuggerTools {
 
     private fun isMcp(bp: com.intellij.xdebugger.breakpoints.XBreakpoint<*>): Boolean =
         (bp as? XBreakpointBase<*, *, *>)?.group == MCP_GROUP
+
+    /**
+     * Builds a condition expression in the breakpoint file's own language.
+     * XExpressionImpl.fromText leaves the language null, which the debugger
+     * evaluator ignores (the breakpoint then breaks unconditionally) — the
+     * language must match the source file so the backend can compile it.
+     */
+    private fun conditionFor(bp: com.intellij.xdebugger.breakpoints.XBreakpoint<*>, text: String) =
+        XDebuggerUtil.getInstance().createExpression(
+            text,
+            ((bp as? XLineBreakpoint<*>)?.fileUrl
+                ?.let { VirtualFileManager.getInstance().findFileByUrl(it) }
+                ?.fileType as? LanguageFileType)?.language,
+            null,
+            EvaluationMode.EXPRESSION,
+        )
 
     // -- session / frame resolution ------------------------------------------
 
