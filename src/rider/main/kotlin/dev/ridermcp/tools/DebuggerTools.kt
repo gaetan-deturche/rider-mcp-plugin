@@ -11,6 +11,7 @@ import com.intellij.xdebugger.XDebuggerManager
 import com.intellij.xdebugger.XDebuggerUtil
 import com.intellij.xdebugger.breakpoints.SuspendPolicy
 import com.intellij.xdebugger.breakpoints.XLineBreakpoint
+import com.intellij.xdebugger.impl.breakpoints.XBreakpointBase
 import com.intellij.xdebugger.impl.breakpoints.XExpressionImpl
 import com.intellij.xdebugger.evaluation.XDebuggerEvaluator
 import com.intellij.xdebugger.frame.XCompositeNode
@@ -48,6 +49,7 @@ object DebuggerTools {
     private const val TIMEOUT_MS = 5_000L
     private const val MAX_FRAMES = 50
     private const val MAX_VARS = 200
+    private const val MCP_GROUP = "MCP"
 
     fun register(server: Server) {
         registerDebugStatus(server)
@@ -59,6 +61,7 @@ object DebuggerTools {
         registerSetBreakpoint(server)
         registerRemoveBreakpoint(server)
         registerUpdateBreakpoint(server)
+        registerStepping(server)
     }
 
     // -- debug_status --------------------------------------------------------
@@ -198,7 +201,7 @@ object DebuggerTools {
                         @Suppress("UNCHECKED_CAST")
                         (bp.type as com.intellij.xdebugger.breakpoints.XBreakpointType<com.intellij.xdebugger.breakpoints.XBreakpoint<*>, *>).getDisplayText(bp)
                     }.getOrNull() ?: bp.type.title
-                "[$i] $enabled $loc$cond"
+                "[$i] ${if (isMcp(bp)) "[MCP] " else ""}$enabled $loc$cond"
             }.joinToString("\n").ifEmpty { "(no breakpoints)" }
             text(text)
         }
@@ -244,15 +247,18 @@ object DebuggerTools {
                 util.toggleLineBreakpoint(project, file, line0)
                 val condition = request.arguments.stringArg("condition")?.trim().orEmpty()
                 var condNote = ""
-                if (condition.isNotEmpty()) {
-                    val bp = bpm.allBreakpoints.filterIsInstance<XLineBreakpoint<*>>()
-                        .firstOrNull { it.fileUrl == file.url && it.line == line0 }
-                    if (bp != null) {
-                        runWriteAction { bp.conditionExpression = XExpressionImpl.fromText(condition) }
-                        condNote = "  if ($condition)"
+                val bp = bpm.allBreakpoints.filterIsInstance<XLineBreakpoint<*>>()
+                    .firstOrNull { it.fileUrl == file.url && it.line == line0 }
+                if (bp != null) {
+                    runWriteAction {
+                        // Tag MCP-created breakpoints so they can be listed/updated/removed as a
+                        // group; `group` is persisted to workspace.xml and shown in the dialog.
+                        (bp as? XBreakpointBase<*, *, *>)?.let { it.group = MCP_GROUP }
+                        if (condition.isNotEmpty()) bp.conditionExpression = XExpressionImpl.fromText(condition)
                     }
+                    if (condition.isNotEmpty()) condNote = "  if ($condition)"
                 }
-                text("[BREAKPOINT set] ${file.name}:$line$condNote  ($path)")
+                text("[BREAKPOINT set \u00b7 MCP] ${file.name}:$line$condNote  ($path)")
             }
         }
     }
@@ -263,25 +269,29 @@ object DebuggerTools {
         server.addTool(
             name = "remove_breakpoint",
             description = "Removes the line breakpoint at file:line, or every breakpoint when " +
-                "all=true. 'line' is 1-based. Use list_breakpoints to see what is set.",
+                "all=true, or every MCP-set breakpoint when mcpOnly=true. 'line' is 1-based. " +
+                "Use list_breakpoints to see what is set.",
             inputSchema = toolSchema(
                 properties = buildJsonObject {
                     put("file", strProp("Absolute path to the source file (omit when all=true)."))
                     put("line", numProp("1-based line number (omit when all=true)."))
                     put("all", boolProp("Remove ALL breakpoints. Default false."))
+                    put("mcpOnly", boolProp("Remove only MCP-set breakpoints (group 'MCP'). Default false."))
                     put("solution", solutionProp())
                 },
             ),
         ) { request ->
             val project = resolveProject(request.arguments.stringArg("solution")) ?: return@addTool noSolution()
             val bpm = XDebuggerManager.getInstance(project).breakpointManager
-            if (request.arguments.boolArg("all") == true) {
-                val bps = bpm.allBreakpoints.toList()
-                if (bps.isEmpty()) return@addTool text("(no breakpoints to remove)")
+            val mcpOnly = request.arguments.boolArg("mcpOnly") == true
+            val all = request.arguments.boolArg("all") == true
+            if (mcpOnly || all) {
+                val bps = bpm.allBreakpoints.filter { !mcpOnly || isMcp(it) }
+                if (bps.isEmpty()) return@addTool text(if (mcpOnly) "(no MCP breakpoints to remove)" else "(no breakpoints to remove)")
                 withContext(Dispatchers.EDT) { runWriteAction { bps.forEach { bpm.removeBreakpoint(it) } } }
-                return@addTool text("[BREAKPOINTS removed] all ${bps.size}.")
+                return@addTool text("[BREAKPOINTS removed] ${if (mcpOnly) "MCP" else "all"} ${bps.size}.")
             }
-            val loc = lineTarget(request) ?: return@addTool text("Pass file+line (existing file), or all=true.")
+            val loc = lineTarget(request) ?: return@addTool text("Pass file+line (existing file), all=true, or mcpOnly=true.")
             val bp = findLineBreakpoint(project, loc.first, loc.second)
                 ?: return@addTool text("No breakpoint at ${loc.first.name}:${loc.second + 1}.")
             withContext(Dispatchers.EDT) { runWriteAction { bpm.removeBreakpoint(bp) } }
@@ -295,8 +305,9 @@ object DebuggerTools {
         server.addTool(
             name = "update_breakpoint",
             description = "Updates the line breakpoint at file:line: enable/disable, set/clear its " +
-                "condition, and/or whether hitting it suspends execution. 'line' is 1-based. Pass " +
-                "condition=\"\" to clear an existing condition.",
+                "condition, and/or whether hitting it suspends execution. 'line' is 1-based; pass " +
+                "condition=\"\" to clear. With mcpOnly=true it applies to every MCP-set breakpoint " +
+                "instead of one file:line.",
             inputSchema = toolSchema(
                 properties = buildJsonObject {
                     put("file", strProp("Absolute path to the source file."))
@@ -304,45 +315,90 @@ object DebuggerTools {
                     put("enabled", boolProp("Optional: enable (true) or disable (false) the breakpoint."))
                     put("condition", strProp("Optional: condition expression; break only when true. Empty string clears it."))
                     put("suspend", boolProp("Optional: true = suspend on hit (normal); false = do not suspend."))
+                    put("mcpOnly", boolProp("Apply to every MCP-set breakpoint (group 'MCP') instead of a single file:line."))
                     put("solution", solutionProp())
                 },
-                required = listOf("file", "line"),
             ),
         ) { request ->
             val project = resolveProject(request.arguments.stringArg("solution")) ?: return@addTool noSolution()
-            val loc = lineTarget(request) ?: return@addTool text("'file' and 'line' are required (and the file must exist).")
-            val bp = findLineBreakpoint(project, loc.first, loc.second)
-                ?: return@addTool text("No breakpoint at ${loc.first.name}:${loc.second + 1}. Use set_breakpoint first.")
-
             val enabled = request.arguments.boolArg("enabled")
             val suspend = request.arguments.boolArg("suspend")
             val condition = request.arguments.stringArg("condition") // null = leave as-is; "" = clear
-            val changes = mutableListOf<String>()
+            if (enabled == null && suspend == null && condition == null)
+                return@addTool text("Nothing to update — pass enabled, condition, and/or suspend.")
+            val mcpOnly = request.arguments.boolArg("mcpOnly") == true
+
+            val bpm = XDebuggerManager.getInstance(project).breakpointManager
+            var label = "MCP"
+            val targets: List<com.intellij.xdebugger.breakpoints.XBreakpoint<*>> = if (mcpOnly) {
+                bpm.allBreakpoints.filter { isMcp(it) }
+            } else {
+                val loc = lineTarget(request) ?: return@addTool text("Pass file+line (existing file), or mcpOnly=true.")
+                val bp = findLineBreakpoint(project, loc.first, loc.second)
+                    ?: return@addTool text("No breakpoint at ${loc.first.name}:${loc.second + 1}. Use set_breakpoint first.")
+                label = "${loc.first.name}:${loc.second + 1}"
+                listOf(bp)
+            }
+            if (targets.isEmpty()) return@addTool text("(no MCP breakpoints to update)")
 
             withContext(Dispatchers.EDT) {
                 runWriteAction {
-                    if (enabled != null) {
-                        bp.isEnabled = enabled
-                        changes.add(if (enabled) "enabled" else "disabled")
-                    }
-                    if (condition != null) {
-                        val c = condition.trim()
-                        if (c.isEmpty()) {
-                            bp.conditionExpression = null
-                            changes.add("condition cleared")
-                        } else {
-                            bp.conditionExpression = XExpressionImpl.fromText(c)
-                            changes.add("condition=if ($c)")
+                    targets.forEach { bp ->
+                        if (enabled != null) bp.isEnabled = enabled
+                        if (condition != null) {
+                            val c = condition.trim()
+                            bp.conditionExpression = if (c.isEmpty()) null else XExpressionImpl.fromText(c)
                         }
-                    }
-                    if (suspend != null) {
-                        bp.suspendPolicy = if (suspend) SuspendPolicy.ALL else SuspendPolicy.NONE
-                        changes.add(if (suspend) "suspend=on" else "suspend=off")
+                        if (suspend != null) bp.suspendPolicy = if (suspend) SuspendPolicy.ALL else SuspendPolicy.NONE
                     }
                 }
             }
-            if (changes.isEmpty()) return@addTool text("Nothing to update — pass enabled, condition, and/or suspend.")
-            text("[BREAKPOINT updated] ${loc.first.name}:${loc.second + 1} — ${changes.joinToString(", ")}.")
+            val changes = buildList {
+                if (enabled != null) add(if (enabled) "enabled" else "disabled")
+                if (condition != null) add(if (condition.isBlank()) "condition cleared" else "condition=if (${condition.trim()})")
+                if (suspend != null) add(if (suspend) "suspend=on" else "suspend=off")
+            }
+            text("[BREAKPOINTS updated] ${targets.size} ($label) — ${changes.joinToString(", ")}.")
+        }
+    }
+
+    // -- resume / pause / step ----------------------------------------------
+
+    private fun registerStepping(server: Server) {
+        stepTool(server, "resume",
+            "Resumes (continues) the suspended debug session until the next breakpoint or exit.") { it.resume() }
+        stepTool(server, "step_over",
+            "Steps over the current line (F8) in the suspended debug session.") { it.stepOver(false) }
+        stepTool(server, "step_into",
+            "Steps into the call on the current line (F7) in the suspended debug session.") { it.stepInto() }
+        stepTool(server, "step_out",
+            "Steps out of the current function (Shift+F8) in the suspended debug session.") { it.stepOut() }
+
+        server.addTool(
+            name = "pause",
+            description = "Pauses (suspends) a running debug session so you can inspect it \u2014 the " +
+                "counterpart to resume.",
+            inputSchema = toolSchema(properties = solutionOnlyProps()),
+        ) { request ->
+            val project = resolveProject(request.arguments.stringArg("solution")) ?: return@addTool noSolution()
+            val mgr = XDebuggerManager.getInstance(project)
+            val session = mgr.currentSession ?: mgr.debugSessions.firstOrNull()
+                ?: return@addTool text("No active debug session.")
+            if (session.isSuspended) return@addTool text("Session '${session.sessionName}' is already suspended.")
+            withContext(Dispatchers.EDT) { session.pause() }
+            text("[PAUSE] requested for '${session.sessionName}'. Check debug_status / get_call_stack once it suspends.")
+        }
+    }
+
+    private fun stepTool(server: Server, name: String, desc: String, action: (XDebugSession) -> Unit) {
+        server.addTool(
+            name = name,
+            description = "$desc Requires a suspended session (see debug_status).",
+            inputSchema = toolSchema(properties = solutionOnlyProps()),
+        ) { request ->
+            val session = currentSession(request) ?: return@addTool noSuspended()
+            withContext(Dispatchers.EDT) { action(session) }
+            text("[${name.uppercase()}] on '${session.sessionName}'. Use debug_status / get_call_stack for the new position.")
         }
     }
 
@@ -358,6 +414,9 @@ object DebuggerTools {
         XDebuggerManager.getInstance(project).breakpointManager.allBreakpoints
             .filterIsInstance<XLineBreakpoint<*>>()
             .firstOrNull { it.fileUrl == file.url && it.line == line0 }
+
+    private fun isMcp(bp: com.intellij.xdebugger.breakpoints.XBreakpoint<*>): Boolean =
+        (bp as? XBreakpointBase<*, *, *>)?.group == MCP_GROUP
 
     // -- session / frame resolution ------------------------------------------
 
