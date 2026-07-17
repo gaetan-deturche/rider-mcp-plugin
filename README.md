@@ -28,9 +28,14 @@ A dual-part JetBrains **Rider** plugin that exposes IDE **interface** and
 ## MCP surface
 
 The server registers these tools (`src/rider/main/kotlin/dev/ridermcp/tools/`).
-The focus is **tool-window / console content** and **live debug state** — things
-the official Rider MCP doesn't already cover (it has symbol/solution lookup, so
-those were dropped).
+The focus is **IDE control the official Rider MCP doesn't cover**: tool-window /
+console content, live debug state, and full run / debug / build control (launch
+configs, stepping, breakpoints, per-project builds). Routing launches/builds
+through this plugin also avoids the JetBrains MCP plugin's global "brave mode"
+confirmation (which would also un-gate shell), so these fire without a prompt.
+
+Every tool takes an optional **`solution`** selector (name or path), needed only
+when several solutions are open in one Rider instance.
 
 **Window content (`WindowContentTools.kt`)** — pure frontend reads:
 
@@ -41,24 +46,52 @@ those were dropped).
 | `list_processes` | Run/debug processes and their consoles |
 | `read_process_output` | Console output of a run/debug process (debug process log / program output) |
 
-**Debugger (`DebuggerTools.kt`)** — live XDebugger state. `list_breakpoints`
-works any time; the rest need a debug session **suspended at a breakpoint**:
+**Run / launch (`RunConfigTools.kt`)** — IntelliJ-platform; no confirmation prompt:
+
+| Tool | Purpose |
+|------|---------|
+| `list_run_configurations` | Run/debug configurations in the solution (name + type) |
+| `run_configuration` | Launch a config by `name`, running its before-launch build first (exactly like clicking Run/Debug). `debug` defaults to `true` (debugger attaches); `debug=false` for a plain Run |
+| `stop_process` | Stop running session(s) — the Stop button. Omit `name` to stop the single running one; `name` matches the Run/Debug tab title |
+
+**Debugger — reads (`DebuggerTools.kt`)** — live XDebugger state; need a session **suspended at a breakpoint** (except `debug_status`):
 
 | Tool | Purpose |
 |------|---------|
 | `debug_status` | Active debug sessions: name, running/suspended, current `file:line` |
 | `list_threads` | Threads (execution stacks) of the suspended session; marks the active one |
 | `get_call_stack` | Call stack of a thread: each frame's function + `file:line` |
-| `get_local_variables` | Locals/params/fields visible in a frame, with values and types |
-| `evaluate` | Evaluate an expression in a frame (`obj.field`, `list.Count`, …) |
-| `list_breakpoints` | All breakpoints: location, enabled, condition (no session needed) |
+| `get_local_variables` | Locals/params/fields in a frame, with values and types |
+| `evaluate` | Evaluate an `expression` in a frame (`obj.field`, `list.Count`, …) |
 
 `get_local_variables` and `evaluate` take an optional `frame` index (from
-`get_call_stack`) and `thread` index; `evaluate` takes an `expression`. The
-XDebugger read path is async/callback-based, so each call is adapted to a
-coroutine (off the EDT) with a timeout. Raw byte-memory isn't exposed — it's not
-in the public XDebugger API; `evaluate` / `get_local_variables` cover value and
-object/field inspection instead.
+`get_call_stack`) and `thread` index. The XDebugger read path is async/callback-
+based, so each call is adapted to a coroutine (off the EDT) with a timeout.
+
+**Debugger — execution control** — on a suspended session (`pause` needs a running one):
+
+| Tool | Purpose |
+|------|---------|
+| `resume` | Continue until the next breakpoint or exit |
+| `pause` | Suspend a running session |
+| `step_over` / `step_into` / `step_out` | Step (F8 / F7 / Shift+F8) |
+
+**Debugger — breakpoints** — work without a running session; they bind on the next debug run:
+
+| Tool | Purpose |
+|------|---------|
+| `list_breakpoints` | All breakpoints, indexed, with `file:line`, enabled state and condition; MCP-set ones are marked `[MCP]` |
+| `set_breakpoint` | Set a line breakpoint at `file` + `line` (1-based), optional `condition` |
+| `update_breakpoint` | Change `enabled` / `condition` (`""` clears) / `suspend` on the breakpoint at `file:line`; `mcpOnly=true` applies to every MCP-set breakpoint |
+| `remove_breakpoint` | Remove the breakpoint at `file:line`, or `all=true`, or `mcpOnly=true` |
+
+MCP-created breakpoints are tagged with the breakpoint group **`MCP`** (persisted
+to `workspace.xml`, shown in the Breakpoints dialog), so `list`/`update`/`remove`
+can target the MCP set (`mcpOnly`) without touching the user's own breakpoints.
+Conditions are built in the breakpoint file's own language via
+`XDebuggerUtil.createExpression` so the debugger actually evaluates them, and the
+breakpoint is created with `XBreakpointManager.addLineBreakpoint` (returns the
+object directly) so the tag/condition reliably apply.
 
 **Diagnostics (`DiagnosticsTools.kt`)** — RD-backed:
 
@@ -70,12 +103,15 @@ object/field inspection instead.
 
 | Tool | Purpose |
 |------|---------|
-| `build_project` | Build **specific** project(s) — the gap the official Rider `build_solution` leaves (it only builds the whole solution). Args: `projects` (name list), `rebuild`, `withoutDependencies`, `solution`. Returns success + errors/warnings with `file:line` |
+| `build_project` | Build **specific** project(s) — the gap the official `build_solution` leaves (it only builds the whole solution). Args: `projects` (name list), `rebuild`, `withoutDependencies`, `solution`. A cold build runs in the background and returns a **`buildId`** immediately — poll `build_status`. If a hot-reload session is live it applies changes instead (.NET Hot Reload, or **Unreal Live Coding** for a running UE editor) |
+| `build_status` | Report a build's status by `buildId`: still running, or the final result (success + errors/warnings with `file:line`) |
+| `cancel_build` | Cancel a running build by `buildId` (or the single in-flight one) via `ISolutionBuilder.Abort()` |
 
 `build_project` runs the same path as "Build Selected Project": the backend
 resolves each `IProject` by name, issues `ISolutionBuilder.CreateBuildRequest`
-(`BuildSessionTarget.Build`/`Rebuild`, `IsSingleProjectBuild`), awaits completion,
-and resolves each build-error offset to a `BuildEvent` (kind/message/code/file/line/column).
+(`BuildSessionTarget.Build`/`Rebuild`, `IsSingleProjectBuild`), executes it in
+the background, and resolves each build-error offset to a `BuildEvent`
+(kind/message/code/file/line/column) read back via `build_status`.
 
 Content extraction walks the tool window's Swing component tree on the EDT,
 pulling text from editor and text components. `read_tool_window` and
@@ -111,7 +147,7 @@ Prerequisites:
 ```
 
 A full `buildPlugin` has been verified end-to-end locally (frontend Kotlin +
-.NET backend compile; the 0.5.0 zip assembles with the backend dll bundled).
+.NET backend compile; the zip assembles with the backend dll bundled).
 
 ## Updating to a new Rider version
 
@@ -158,8 +194,8 @@ attached (`softprops/action-gh-release`; the job grants `contents: write`).
 ```bash
 # bump pluginVersion in gradle.properties AND serverInfo in McpHttpServer.kt
 # (update README refs), commit, then:
-git tag v0.5.0
-git push origin v0.5.0      # CI builds and publishes the GitHub Release with the zip
+git tag v0.14.1
+git push origin v0.14.1      # CI builds and publishes the GitHub Release with the zip
 ```
 
 **Build on demand:** GitHub → *Actions → Build plugin → Run workflow*
@@ -170,13 +206,13 @@ permalink). A copy may also be committed under `dist/` for a version-pinned raw
 URL, e.g.:
 
 ```
-https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.5.0.zip
+https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.14.1.zip
 ```
 
 ## Status / TODO
 
-The full build compiles locally; CI (`bitbucket-pipelines.yml`) builds it on
-tag push (see [Releasing / CI](#releasing--ci)).
+The full build compiles locally; CI (GitHub Actions, `.github/workflows/ci.yml`) builds it on every
+push/PR/tag (see [Releasing / CI](#releasing--ci)).
 
 - [x] Gradle build + rdgen model generation (Kotlin + C#).
 - [x] Frontend Kotlin compiles against the Rider SDK.
