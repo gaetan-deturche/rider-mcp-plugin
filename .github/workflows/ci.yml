@@ -12,17 +12,17 @@ jobs:
     permissions:
       contents: write   # allow the release step to create GitHub Releases on tags
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '25'
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '8.0'
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libicu-dev
       - name: Cache Gradle (incl. downloaded Rider SDK)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.gradle/caches
@@ -30,15 +30,22 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle.properties') }}
           restore-keys: |
             gradle-${{ runner.os }}-
+      - name: Cache NuGet (ReSharper/Rider .NET SDK packages)
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
       - run: ./gradlew --no-daemon --console=plain :protocol:rdgen
       - run: ./gradlew --no-daemon --console=plain buildPlugin
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: plugin-zip
           path: build/distributions/**
       - name: Publish GitHub Release (tags only)
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: build/distributions/*.zip
           fail_on_unmatched_files: true
