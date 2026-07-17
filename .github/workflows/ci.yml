@@ -9,6 +9,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # native-platform lib triggers a JDK 25 native-access warning in the
+      # Gradle launcher JVM (GRADLE_OPTS targets it; org.gradle.jvmargs only
+      # reaches the daemon).
+      GRADLE_OPTS: "--enable-native-access=ALL-UNNAMED"
     permissions:
       contents: write   # allow the release step to create GitHub Releases on tags
     steps:
