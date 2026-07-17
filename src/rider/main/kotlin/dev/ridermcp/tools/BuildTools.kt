@@ -1,7 +1,7 @@
 package dev.ridermcp.tools
 
 import com.intellij.ide.plugins.PluginManagerCore
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.service
 import com.intellij.openapi.extensions.PluginId
@@ -189,7 +189,7 @@ object BuildTools {
             if (!isUnreal || !available) return null
 
             withContext(Dispatchers.EDT) {
-                ApplicationManager.getApplication().saveAll()
+                FileDocumentManager.getInstance().saveAllDocuments()
                 val solution = project.solution
                 val model = loader.loadClass("com.jetbrains.rider.plugins.unreal.model.frontendBackend.RdRiderModel_PregeneratedKt")
                     .methods.first { it.name == "getRdRiderModel" }.invoke(null, solution)
