@@ -43,7 +43,7 @@ class McpHttpServer(private val port: Int) {
 
     private fun buildServer(): Server {
         val server = Server(
-            serverInfo = Implementation(name = "rider-mcp", version = "0.14.0"),
+            serverInfo = Implementation(name = "rider-mcp", version = "0.14.1"),
             options = ServerOptions(
                 capabilities = ServerCapabilities(
                     tools = ServerCapabilities.Tools(listChanged = true),
