@@ -142,8 +142,12 @@ namespace RiderMcp
             if (r.State.Value.HasFlag(BuildRunState.Completed))
                 return Error(id, $"Build '{id}' has already finished; nothing to cancel.");
 
-            // Aborts the currently running build request (documented behaviour of Abort()).
-            solution.GetComponent<ISolutionBuilder>().Abort();
+            // Abort THIS request via its own runner — the same path as Rider's Stop
+            // button (ISolutionBuilderRequest.Abort). ISolutionBuilder.Abort() only
+            // aborts the DEFAULT builder's RunningRequest, which may not be the runner
+            // executing this build (e.g. a UE build runs on a different runner), so it
+            // silently no-ops there.
+            r.Abort();
             return Snapshot(id, r);
         }
 
