@@ -10,7 +10,7 @@ pluginManagement {
     resolutionStrategy {
         eachPlugin {
             if (requested.id.id == "com.jetbrains.rdgen") {
-                useModule("com.jetbrains.rd:rd-gen:2026.1.3")
+                useModule("com.jetbrains.rd:rd-gen:2026.2.0")
             }
         }
     }

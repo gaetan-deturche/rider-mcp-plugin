@@ -62,6 +62,10 @@ dependencies {
         // HotReloadApplyResultKind — that type lives in a separate product module
         // that isn't on the compile classpath by default, so pull it in explicitly.
         bundledModule("intellij.rider.debugger.shared")
+        // 2026.2 moved the Project.solution extension (SolutionHostExtensionsKt,
+        // pkg com.jetbrains.rider.projectView) out of the core intellij.rider.jar
+        // into this product module — without it: Unresolved reference 'solution'.
+        bundledModule("intellij.rider.rdclient.dotnet")
     }
 
     // NB: we do NOT depend on project(":protocol") at runtime. rdgen emits the
