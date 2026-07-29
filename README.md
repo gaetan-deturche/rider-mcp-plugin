@@ -54,6 +54,13 @@ when several solutions are open in one Rider instance.
 | `run_configuration` | Launch a config by `name`, running its before-launch build first (exactly like clicking Run/Debug). `debug` defaults to `true` (debugger attaches); `debug=false` for a plain Run |
 | `stop_process` | Stop running session(s) — the Stop button. Omit `name` to stop the single running one; `name` matches the Run/Debug tab title |
 
+**Solution configuration (`SolutionConfigTools.kt`)** — the toolbar "Development Editor | Win64" selector; for Unreal the build target is part of the configuration name:
+
+| Tool | Purpose |
+|------|---------|
+| `list_solution_configurations` | All `configuration \| platform` pairs, active one marked |
+| `set_solution_configuration` | Set the active pair by `configuration` (+ `platform` when ambiguous), case-insensitive |
+
 **Debugger — reads (`DebuggerTools.kt`)** — live XDebugger state; need a session **suspended at a breakpoint** (except `debug_status`):
 
 | Tool | Purpose |
@@ -194,8 +201,8 @@ attached (`softprops/action-gh-release`; the job grants `contents: write`).
 ```bash
 # bump pluginVersion in gradle.properties AND serverInfo in McpHttpServer.kt
 # (update README refs), commit, then:
-git tag v0.14.1
-git push origin v0.14.1      # CI builds and publishes the GitHub Release with the zip
+git tag v0.16.0
+git push origin v0.16.0      # CI builds and publishes the GitHub Release with the zip
 ```
 
 **Build on demand:** GitHub → *Actions → Build plugin → Run workflow*
@@ -206,7 +213,7 @@ permalink). A copy may also be committed under `dist/` for a version-pinned raw
 URL, e.g.:
 
 ```
-https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.14.1.zip
+https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.16.0.zip
 ```
 
 ## Status / TODO
