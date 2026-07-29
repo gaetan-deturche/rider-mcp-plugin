@@ -5,6 +5,7 @@ import dev.ridermcp.tools.BuildTools
 import dev.ridermcp.tools.DebuggerTools
 import dev.ridermcp.tools.DiagnosticsTools
 import dev.ridermcp.tools.RunConfigTools
+import dev.ridermcp.tools.SolutionConfigTools
 import dev.ridermcp.tools.WindowContentTools
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
@@ -43,7 +44,7 @@ class McpHttpServer(private val port: Int) {
 
     private fun buildServer(): Server {
         val server = Server(
-            serverInfo = Implementation(name = "rider-mcp", version = "0.15.0"),
+            serverInfo = Implementation(name = "rider-mcp", version = "0.16.0"),
             options = ServerOptions(
                 capabilities = ServerCapabilities(
                     tools = ServerCapabilities.Tools(listChanged = true),
@@ -55,6 +56,7 @@ class McpHttpServer(private val port: Int) {
         DiagnosticsTools.register(server)
         BuildTools.register(server)
         RunConfigTools.register(server)
+        SolutionConfigTools.register(server)
         return server
     }
 
