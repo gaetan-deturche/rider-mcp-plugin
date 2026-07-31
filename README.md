@@ -100,6 +100,18 @@ Conditions are built in the breakpoint file's own language via
 breakpoint is created with `XBreakpointManager.addLineBreakpoint` (returns the
 object directly) so the tag/condition reliably apply.
 
+**Crash tripwire (`DebugWatchTools.kt`)** — watch a debugged process for unexpected crashes without babysitting it:
+
+| Tool | Purpose |
+|------|---------|
+| `list_active_debug_sessions` | Every running debug session (whoever started it — plugin or manual Play) as handle + config + pid + state |
+| `wait_for_stop` | Long-poll (25s slices, re-poll on `[TIMEOUT]`) until the session with `handle` next stops crash-like: `unhandled_exception`/`exception` with thread + top frames, or `process_exited`. Pauses at enabled user breakpoints are ignored |
+
+A client arms it detached (background `curl` loop directly against `:6363` —
+an aggregating proxy would cap the call) and is woken by its completion with
+the crash payload; the process stays suspended for follow-up `get_call_stack`
+/ `get_local_variables` / `evaluate`.
+
 **Diagnostics (`DiagnosticsTools.kt`)** — RD-backed:
 
 | Tool | Purpose |
@@ -201,8 +213,8 @@ attached (`softprops/action-gh-release`; the job grants `contents: write`).
 ```bash
 # bump pluginVersion in gradle.properties AND serverInfo in McpHttpServer.kt
 # (update README refs), commit, then:
-git tag v0.16.0
-git push origin v0.16.0      # CI builds and publishes the GitHub Release with the zip
+git tag v0.17.0
+git push origin v0.17.0      # CI builds and publishes the GitHub Release with the zip
 ```
 
 **Build on demand:** GitHub → *Actions → Build plugin → Run workflow*
@@ -213,7 +225,7 @@ permalink). A copy may also be committed under `dist/` for a version-pinned raw
 URL, e.g.:
 
 ```
-https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.16.0.zip
+https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.17.0.zip
 ```
 
 ## Status / TODO
