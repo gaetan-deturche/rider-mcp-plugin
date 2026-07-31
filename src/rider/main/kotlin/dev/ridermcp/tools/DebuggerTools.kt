@@ -488,7 +488,7 @@ object DebuggerTools {
         return withTimeoutOrNull(TIMEOUT_MS) { d.await() } ?: ctx.executionStacks.toList()
     }
 
-    private suspend fun awaitFrames(stack: XExecutionStack, max: Int): List<XStackFrame> {
+    internal suspend fun awaitFrames(stack: XExecutionStack, max: Int): List<XStackFrame> {
         val d = CompletableDeferred<List<XStackFrame>>()
         val acc = mutableListOf<XStackFrame>()
         stack.topFrame?.let { acc.add(it) }
@@ -547,7 +547,7 @@ object DebuggerTools {
         return "$expr = ${presentationOf(value)}"
     }
 
-    private fun frameLabel(frame: XStackFrame): String {
+    internal fun frameLabel(frame: XStackFrame): String {
         val sb = StringBuilder()
         runCatching {
             frame.customizePresentation(object : ColoredTextContainer {
