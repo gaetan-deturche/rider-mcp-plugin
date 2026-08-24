@@ -63,7 +63,10 @@ object RunConfigTools {
                 "normal before-launch build first (exactly like clicking Run/Debug). Defaults to a DEBUG " +
                 "start so a debugger attaches; pass debug=false for a plain Run. Use " +
                 "list_run_configurations to discover names. Runs without a confirmation prompt (unlike the " +
-                "built-in jetbrains run tool), so shell can stay gated while launches are frictionless.",
+                "built-in jetbrains run tool), so shell can stay gated while launches are frictionless. " +
+                "A debug launch also ARMS THE CRASH TRIPWIRE automatically and returns its handle " +
+                "(tripwire armed (handle=tw-N)): crash-like stops are captured server-side from process " +
+                "start, and the reply names the watcher command to run detached so the client is woken.",
             inputSchema = toolSchema(
                 properties = buildJsonObject {
                     put("name", buildJsonObject {
@@ -112,14 +115,30 @@ object RunConfigTools {
                 )
             }
 
+            // Arm the crash tripwire BEFORE firing, so a crash during startup is
+            // caught too — the debug session only appears after the before-launch
+            // build, which is why the handle is a ticket rather than a session id.
+            val ticket = if (debug) CrashTripwire.arm(project, name) else null
+
             withContext(Dispatchers.EDT) {
                 ProgramRunnerUtil.executeConfiguration(settings, executor)
             }
             val mode = if (debug) "DEBUG" else "RUN"
-            text(
-                "[$mode · started] \"$name\" [${settings.type.displayName}] in '${project.name}'. " +
+            val where = project.basePath ?: project.name
+            val sb = StringBuilder(
+                "[$mode · started] \"$name\" [${settings.type.displayName}] in '${project.name}' ($where). " +
                     "Before-launch build (if any) runs first; watch the Run/Debug tool window."
             )
+            if (ticket != null) {
+                sb.append("\ntripwire armed (handle=${ticket.id}) — crash-like stops are captured from process ")
+                sb.append("start, so a startup crash is not lost even if the watcher below starts later.")
+                sb.append("\nREQUIRED to actually be woken: start the wake watcher detached now ")
+                sb.append("(run_in_background), it exits with the crash payload:")
+                sb.append("\n  bash ${armScriptPath()} ${ticket.id}")
+            } else {
+                sb.append("\n(no tripwire: not a debug launch — no debugger attaches, so a crash cannot be caught)")
+            }
+            text(sb.toString())
         }
 
         server.addTool(
@@ -171,6 +190,21 @@ object RunConfigTools {
                 text("[STOPPED] " + targets.joinToString(", ") { "\"${it.displayName}\"" } + " in '${project.name}'.")
             }
         }
+    }
+
+    /**
+     * Where the client's wake-watcher script lives, in the bash form the caller
+     * runs it in (`/c/Users/…`). Overridable with -Drider.mcp.tripwireScript for
+     * a client that keeps it elsewhere; falls back to the plain script name when
+     * the default location doesn't exist.
+     */
+    private fun armScriptPath(): String {
+        System.getProperty("rider.mcp.tripwireScript")?.takeIf { it.isNotBlank() }?.let { return it }
+        val home = System.getProperty("user.home")?.replace('\\', '/')?.trimEnd('/') ?: return "arm_tripwire.sh"
+        val path = "$home/.claude/skills/rider-run/arm_tripwire.sh"
+        if (!java.io.File(path).isFile) return "arm_tripwire.sh"
+        // C:/Users/x → /c/Users/x, the form bash on Windows accepts.
+        return if (path.length > 2 && path[1] == ':') "/" + path[0].lowercaseChar() + path.substring(2) else path
     }
 
     private fun text(s: String) = CallToolResult(content = listOf(TextContent(s)))

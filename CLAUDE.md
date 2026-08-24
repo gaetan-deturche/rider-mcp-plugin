@@ -21,7 +21,46 @@
 - **Focus-steal when a breakpoint hits** = the global registry key `debugger.mayBringFrameToFrontOnBreakpoint` (read by `DebuggerFocusManager`; checkbox in Settings→Build,Execution,Deployment→Debugger). It's global, NOT per-breakpoint — can't be scoped to MCP breakpoints; set it false to stop the IDE grabbing focus for all breakpoints.
 - **KTS-runner limit:** the `jetbrains__run_inspection_kts` tool can't import debugger APIs (XDebuggerManager etc. aren't on its classpath) → "No inspection created after compilation". Not usable as a live debugger REPL.
 
-**Crash tripwire (added 2026-07-31, v0.17.0, `DebugWatchTools.kt` — frontend XDebugger):** wakes a Claude session on an UNEXPECTED crash of a debugged process without babysitting. `list_active_debug_sessions` → `{handle ds-<identityHashCode>, config, pid, state}` for every running session across open projects (covers processes the session didn't launch — manual Play in Rider); `wait_for_stop(handle, timeoutSeconds≤60)` long-polls in 25s slices (reply `[TIMEOUT]` → re-poll; keeps each HTTP request under transport idle timeouts) and returns on crash-like stops only: `unhandled_exception` (pause matching no user breakpoint — also covers manual pause/step, caveat included) / `exception` (exception-type non-line bp via `XDebugSessionImpl.activeNonLineBreakpoint`) / `already_paused` / `process_exited`; **enabled user breakpoints are filtered INSIDE the wait** (listener ignores them, keeps waiting) so manual breakpoints never wake the watcher. Impl: `XDebugSession.addSessionListener` + `CompletableDeferred` + `withTimeoutOrNull`; payload = position, thread, top 10 frames (DebuggerTools' `awaitFrames`/`frameLabel`, now internal). **Claude side = a step in the user-level `rider-run` skill** (`~/.claude/skills/rider-run/` — the generic build→launch→watch workflow skill; the standalone crash-tripwire skill was folded into it 2026-07-31, arming is automatic after every debug launch; its sibling **`ue-attach`** skill (`~/.claude/skills/ue-attach/`) covers attaching to/working in an instance the USER started — discovery/disambiguation, remote Python, log, Live Coding, debugger, and the same tripwire arm): acquire handle from the list tool, then `run_in_background` `arm_tripwire.sh <handle>` — a curl loop hitting the plugin **directly on :6363** (NOT via mcp-proxy: its 120s call cap) whose exit wakes the owning session with the payload; session then inspects (stack/locals/evaluate — process still suspended) and PushNotifications the user if away. `run_configuration` can't return the handle synchronously (session exists only after the before-launch UE build), so acquisition is always via the list tool.
+**Crash tripwire (added 2026-07-31 v0.17.0; auto-armed at launch since v0.19.0, 2026-08-24 —
+`DebugWatchTools.kt` + `CrashTripwire.kt`, frontend XDebugger):** wakes a Claude session on an
+UNEXPECTED crash of a debugged process without babysitting. **The plugin cannot wake an MCP client**
+— the wake is the client's own background task exiting — so the split is: the plugin watches
+server-side from process start, the client long-polls for the wake.
+`run_configuration(debug=true)` **arms a ticket** (`CrashTripwire.arm`) BEFORE
+`executeConfiguration`, returns `tripwire armed (handle=tw-N)` plus the watcher command in its
+reply, and buffers the first crash-like stop per session — so a crash during startup, or between
+two poll slices, is replayed by the next poll instead of being lost (the old poll-only design lost
+both). A ticket binds to a session in **its own project** only, and never to one that already
+existed when it was armed (`Ticket.predates`) — Curiosity and Curiosity2 are both open as solution
+name `UE5`, so name matching alone is not safe. Binding happens on `XDebuggerManager.TOPIC` /
+`processStarted` **and** via `resolveSession()`, a scan used by `wait_for_stop`/the listing so the
+binding doesn't depend on that event reaching us.
+`list_active_debug_sessions` → **one row per target**: `handle=ds-<identityHashCode>` for live
+sessions (incl. a manual Play), `handle=tw-N state=pending` for an armed launch whose session
+hasn't started, each with the solution **PATH** and a `watch=`/`buffered=` annotation. Exactly one
+row per target is what lets the client discover its handle unambiguously.
+`wait_for_stop(handle, timeoutSeconds<=60)` takes either handle kind, long-polls in 25s slices
+(reply `[TIMEOUT]` → re-poll; keeps each HTTP request under transport idle timeouts) and returns on
+crash-like stops only: `unhandled_exception` (pause matching no user breakpoint — also covers manual
+pause/step, caveat included) / `exception` (exception-type non-line bp via
+`XDebugSessionImpl.activeNonLineBreakpoint`) / `already_paused` / `process_exited` /
+`never_started` (armed launch, no session — before-launch build failed); **enabled user breakpoints
+are filtered INSIDE the wait**, so manual breakpoints never wake the watcher. Impl:
+`XDebugSession.addSessionListener` + `CompletableDeferred` + `withTimeoutOrNull`; payload = position,
+thread, top 10 frames (DebuggerTools' `awaitFrames`/`frameLabel`, internal). A buffered stop is
+re-rendered from the live suspend context when the process is still suspended (the normal case),
+else from the snapshot taken at stop time.
+**Claude side** = the user-level `rider-run` skill (`~/.claude/skills/rider-run/`, sibling
+`ue-attach` for an instance the USER started): after the launch, `run_in_background`
+`arm_tripwire.sh [handle]` — a curl loop hitting the plugin **directly on :6363** (NOT via
+mcp-proxy: its 120s call cap) whose exit wakes the owning session with the payload. **The handle is
+optional**: with none the script discovers the plugin's single watchable row and refuses (exit 2,
+printing the list) on zero or several — it never guesses between two editors. A PostToolUse hook
+(`~/.claude/hooks/tripwire-reminder.py`, wired in `~/.claude/settings.json`) injects the watcher
+command after every debug launch as a second reminder layer. Verified end-to-end 2026-08-24:
+launch → `tripwire armed (handle=tw-1)` → bound to `ds-…` in the right solution → `debug crash` via
+remote Python → session woken with `[STOP · unhandled_exception]` at `StructuredLog.cpp:1608`
+(`UEngine::PerformError`), buffered replay instant afterwards.
 
 **UPSTREAM RIDERLINK BUG (not this plugin) — editor crash in RD dispatch (2026-07-31):** the UE
 editor died with a real `0xc0000005` access violation (reading `0x000000b0`) inside
