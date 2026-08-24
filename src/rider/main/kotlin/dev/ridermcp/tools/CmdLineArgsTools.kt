@@ -85,6 +85,21 @@ object CmdLineArgsTools {
 
             val sb = StringBuilder("CommandLineArguments in '${project.name}' (plugin ${if (enabled == true) "ENABLED" else "disabled"})")
             effective?.let { sb.append("\neffective for selected config: $it") }
+            // Per-configuration enablement: args only apply to configurations whose own
+            // checkbox is on — a checked argument tree with all configs unchecked yields
+            // an empty effective string, which is invisible without this section.
+            val configs = withContext(Dispatchers.EDT) { registeredConfigs(svc) }
+            if (configs.isNotEmpty()) {
+                sb.append("\nconfigurations (args apply only to CHECKED ones — enable_command_line_config):")
+                configs.forEach { (id, checked, trusted, args) ->
+                    val flags = buildList {
+                        if (!trusted) add("untrusted")
+                    }.joinToString(" ")
+                    sb.append("\n  ${if (checked) "[x]" else "[ ]"} $id${if (flags.isEmpty()) "" else "  ($flags)"}${if (checked && args.isNotEmpty()) "  -> $args" else ""}")
+                }
+            } else {
+                sb.append("\nconfigurations: (none registered yet — solution still loading?)")
+            }
             val file = stateFile(project)
             if (!file.exists()) {
                 sb.append("\n(no state file yet: ${file.path})")
@@ -212,6 +227,61 @@ object CmdLineArgsTools {
                 else "[$CUSTOM_NODE ${if (checked) "set" else "set (unchecked)"}] \"$args\" in ${file.name}; plugin reloaded — applies to the next launch."
             )
         }
+
+        server.addTool(
+            name = "enable_command_line_config",
+            description = "Checks/unchecks run CONFIGURATIONS in the CommandLineArguments plugin — the " +
+                "second gate: the argument tree only applies to configurations whose own checkbox is on. " +
+                "Pass config=\"*\" to act on all registered configurations (recovery for a wiped " +
+                "enablement list), or a configuration id/name from list_command_line_args. Persists and " +
+                "rebuilds the effective arguments.",
+            inputSchema = toolSchema(
+                properties = buildJsonObject {
+                    put("config", buildJsonObject {
+                        put("type", "string")
+                        put("description", "Configuration id/name from list_command_line_args, or \"*\" for all.")
+                    })
+                    put("enabled", buildJsonObject {
+                        put("type", "boolean")
+                        put("description", "true = check (args apply), false = uncheck.")
+                    })
+                    put("solution", solutionProp())
+                },
+                required = listOf("config", "enabled"),
+            ),
+        ) { request ->
+            val project = resolveProject(request.arguments.stringArg("solution")) ?: return@addTool noSolution()
+            val svc = argumentsService(project)
+                ?: return@addTool text("CommandLineArguments plugin ($PLUGIN_ID) is not installed/enabled in '${project.name}'.")
+            val target = request.arguments.stringArg("config")?.trim().orEmpty()
+            if (target.isEmpty()) return@addTool text("'config' is required (id/name, or \"*\").")
+            val enabled = request.arguments.boolArg("enabled") ?: return@addTool text("'enabled' is required.")
+
+            val changed = withContext(Dispatchers.EDT) {
+                val hits = mutableListOf<String>()
+                forEachRegistered(svc) { id, adapter, node ->
+                    if (target == "*" || id.equals(target, true) || id.substringAfterLast('.').equals(target, true)) {
+                        runCatching {
+                            node.javaClass.methods.first { it.name == "setChecked" && it.parameterCount == 1 }.invoke(node, enabled)
+                            adapter?.javaClass?.methods?.first { it.name == "setEnabled" && it.parameterCount == 1 }?.invoke(adapter, enabled)
+                            hits.add(id)
+                        }
+                    }
+                }
+                if (hits.isNotEmpty()) {
+                    // reload() rebuilds cachedArgs from the checkbox state and refreshes the UI;
+                    // save() persists enabledConfigs so the change survives a restart.
+                    svc.javaClass.methods.firstOrNull { it.name == "reload" || it.name.startsWith("reload$") }?.invoke(svc)
+                    svc.javaClass.declaredMethods.firstOrNull { it.name == "save" || it.name.startsWith("save$") }
+                        ?.also { it.isAccessible = true }?.let { runCatching { it.invoke(svc) } }
+                }
+                hits
+            }
+            if (changed.isEmpty()) return@addTool text(
+                "No registered configuration matches \"$target\". See list_command_line_args (configurations section)."
+            )
+            text("[CONFIG ${if (enabled) "enabled" else "disabled"}] ${changed.size} configuration(s): ${changed.joinToString(", ")} — persisted; applies to the next launch.")
+        }
     }
 
     // -- plugin access ---------------------------------------------------------
@@ -222,6 +292,47 @@ object CmdLineArgsTools {
         val clazz = runCatching { descriptor.pluginClassLoader?.loadClass(SERVICE_FQN) }.getOrNull() ?: return null
         return runCatching { project.getService(clazz) }.getOrNull()
     }
+
+    /**
+     * Iterates the service's private perSettingsData registry (uniqueID ->
+     * SettingsData(adapter, node)) reflectively — the per-configuration checkbox
+     * state lives on those nodes, not in the JSON state file.
+     */
+    private fun forEachRegistered(svc: Any, action: (id: String, adapter: Any?, node: Any) -> Unit) {
+        val field = runCatching { svc.javaClass.getDeclaredField("perSettingsData").also { it.isAccessible = true } }.getOrNull() ?: return
+        val map = field.get(svc) as? Map<*, *> ?: return
+        for ((id, data) in map) {
+            if (id !is String || data == null) continue
+            val adapter = runCatching {
+                data.javaClass.getDeclaredMethod("getAdapter").also { it.isAccessible = true }.invoke(data)
+            }.getOrNull()
+            val node = runCatching {
+                data.javaClass.getDeclaredMethod("getNode").also { it.isAccessible = true }.invoke(data)
+            }.getOrNull() ?: continue
+            action(id, adapter, node)
+        }
+    }
+
+    /** (id, checked, trusted, effectiveArgs) per registered configuration, sorted by id. */
+    private fun registeredConfigs(svc: Any): List<ConfigRow> {
+        val out = mutableListOf<ConfigRow>()
+        forEachRegistered(svc) { id, adapter, node ->
+            val checked = runCatching {
+                node.javaClass.methods.first { it.name == "isChecked" && it.parameterCount == 0 }.invoke(node) as Boolean
+            }.getOrDefault(false)
+            val trusted = runCatching {
+                adapter?.javaClass?.methods?.first { it.name == "isTrusted" && it.parameterCount == 0 }?.invoke(adapter) as? Boolean
+            }.getOrNull() ?: false
+            val args = runCatching {
+                adapter?.javaClass?.methods?.first { it.name == "getArguments" && it.parameterCount == 0 }?.invoke(adapter) as? String
+            }.getOrNull().orEmpty()
+            if (adapter != null) out.add(ConfigRow(id, checked, trusted, args))
+        }
+        return out.sortedBy { it.id }
+    }
+
+    /** One row of the configurations section. */
+    data class ConfigRow(val id: String, val checked: Boolean, val trusted: Boolean, val args: String)
 
     /** Mirrors the plugin's locateStateFile() for the Rider branch. */
     private fun stateFile(project: Project) = File(project.basePath, project.name + ".cmdlineargs.json")

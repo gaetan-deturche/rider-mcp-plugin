@@ -104,8 +104,9 @@ object directly) so the tag/condition reliably apply.
 
 | Tool | Purpose |
 |------|---------|
-| `list_command_line_args` | The plugin's argument tree (paths, checked, filters) + effective args for the selected config; with the plugin inactive, the config's own program parameters |
+| `list_command_line_args` | The plugin's argument tree (paths, checked, filters), the per-configuration enablement section, and effective args for the selected config; with the plugin inactive, the config's own program parameters |
 | `toggle_command_line_arg` | Check/uncheck a tree node by path (edits `<solution>.cmdlineargs.json`, triggers the plugin's reload) |
+| `enable_command_line_config` | Check/uncheck run CONFIGURATIONS in the plugin (the second gate: the tree only applies to checked configurations); `config="*"` recovers a wiped enablement list |
 | `set_custom_command_line_args` | Ad-hoc args via a dedicated top-level "MCP" node (`args=""` removes it); with the plugin inactive, writes the run configuration's program parameters directly (incl. UE C++ configs per active configuration\|platform) |
 
 **Crash tripwire (`DebugWatchTools.kt`)** — watch a debugged process for unexpected crashes without babysitting it:
@@ -221,8 +222,8 @@ attached (`softprops/action-gh-release`; the job grants `contents: write`).
 ```bash
 # bump pluginVersion in gradle.properties AND serverInfo in McpHttpServer.kt
 # (update README refs), commit, then:
-git tag v0.18.0
-git push origin v0.18.0      # CI builds and publishes the GitHub Release with the zip
+git tag v0.18.1
+git push origin v0.18.1      # CI builds and publishes the GitHub Release with the zip
 ```
 
 **Build on demand:** GitHub → *Actions → Build plugin → Run workflow*
@@ -233,7 +234,7 @@ permalink). A copy may also be committed under `dist/` for a version-pinned raw
 URL, e.g.:
 
 ```
-https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.18.0.zip
+https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.18.1.zip
 ```
 
 ## Status / TODO
