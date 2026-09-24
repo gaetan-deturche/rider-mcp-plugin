@@ -15,9 +15,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -54,9 +55,9 @@ object CmdLineArgsTools {
             name = "list_command_line_args",
             description = "Shows the CommandLineArguments plugin's argument tree (the source of truth " +
                 "for launch args while that plugin is enabled — it overrides the run configuration's " +
-                "parameters at start): every node with its path, checked state and filters, plus the " +
-                "effective argument string for the selected run configuration. Use the paths with " +
-                "toggle_command_line_arg.",
+                "parameters at start): every node with its path, checked state ([~] = folder with mixed " +
+                "children) and filters, plus the effective argument string for the selected run " +
+                "configuration. The printed paths go verbatim into toggle_command_line_arg.",
             inputSchema = toolSchema(properties = buildJsonObject { put("solution", solutionProp()) }),
         ) { request ->
             val project = resolveProject(request.arguments.stringArg("solution")) ?: return@addTool noSolution()
@@ -106,7 +107,7 @@ object CmdLineArgsTools {
             } else {
                 sb.append("\ntree (${file.name}):")
                 val root = json.parseToJsonElement(file.readText()).jsonObject["root"]?.jsonObject
-                renderItems(root?.get("items")?.jsonArray, "", sb)
+                renderItems(root?.get("items")?.jsonArray, "", "", sb)
             }
             text(sb.toString())
         }
@@ -115,13 +116,15 @@ object CmdLineArgsTools {
             name = "toggle_command_line_arg",
             description = "Checks/unchecks one node of the CommandLineArguments plugin's argument tree " +
                 "by its path from list_command_line_args (segments joined with '/', e.g. " +
-                "\"render/-AttachPix\"). Edits the .cmdlineargs.json state file and triggers the " +
-                "plugin's reload, so the change applies to the next launch.",
+                "\"render/-AttachPix\"; a '/' inside a node name is written \"\\/\", e.g. " +
+                "\"MCP/-ExecCmds=/open \\/Game\\/Maps\\/X\"). A folder target checks/unchecks its whole " +
+                "subtree, like its checkbox in the plugin UI. Edits the .cmdlineargs.json state file and " +
+                "triggers the plugin's reload, so the change applies to the next launch.",
             inputSchema = toolSchema(
                 properties = buildJsonObject {
                     put("path", buildJsonObject {
                         put("type", "string")
-                        put("description", "Node path, '/'-joined names from list_command_line_args.")
+                        put("description", "Node path as printed by list_command_line_args: '/'-joined names, \"\\/\" = literal '/' in a name, \"\\\\\" = literal '\\' before a '/' or at a name's end.")
                     })
                     put("checked", buildJsonObject {
                         put("type", "boolean")
@@ -144,7 +147,7 @@ object CmdLineArgsTools {
             if (!file.exists()) return@addTool text("No state file (${file.path}) — the plugin has no arguments yet.")
             val doc = json.parseToJsonElement(file.readText()).jsonObject
             val rootObj = doc["root"]?.jsonObject ?: return@addTool text("Malformed state file: no 'root'.")
-            val newItems = toggleAtPath(rootObj["items"]?.jsonArray ?: JsonArray(emptyList()), path.split('/'), checked)
+            val newItems = toggleAtPath(rootObj["items"]?.jsonArray ?: JsonArray(emptyList()), splitPath(path), checked)
                 ?: return@addTool text("No node at path \"$path\". Check list_command_line_args for exact names.")
 
             writeAndReload(project, file, doc, rootObj, newItems)
@@ -154,21 +157,37 @@ object CmdLineArgsTools {
         server.addTool(
             name = "set_custom_command_line_args",
             description = "Sets ad-hoc launch arguments. With the CommandLineArguments plugin active it " +
-                "manages a dedicated top-level \"$CUSTOM_NODE\" node (created/replaced, checked by default; " +
-                "args=\"\" removes it) and leaves the rest of the user's tree untouched — the plugin " +
-                "overrides run-config parameters at launch, so this is the only path that works then. With " +
-                "the plugin inactive it FALLS BACK to writing the run configuration's own program " +
-                "parameters directly (the 'config' name, default: selected configuration). Applies to the " +
-                "next launch.",
+                "manages a dedicated top-level \"$CUSTOM_NODE\" folder (created/replaced, checked by default; " +
+                "args=\"\" or items=[] removes it) and leaves the rest of the user's tree untouched — the " +
+                "plugin overrides run-config parameters at launch, so this is the only path that works then. " +
+                "Prefer 'items' over 'args': one child node per flag or group, so each can be flipped by hand " +
+                "or with toggle_command_line_arg — e.g. items=[\"-log\", \"-dpcvars=r.slcp.X=1\", " +
+                "{\"name\":\"-ExecCmds=\", \"param\":true, \"join\":true, \"delimiter\":\",\", \"prefix\":\"\\\"\", " +
+                "\"postfix\":\"\\\"\", \"items\":[\"stat unit\", \"stat gpu\"]}] launches with " +
+                "-log -dpcvars=r.slcp.X=1 -ExecCmds=\"stat unit,stat gpu\". 'args' writes the whole string " +
+                "as a single child. With the plugin inactive it FALLS BACK to writing the run configuration's " +
+                "own program parameters directly (the 'config' name, default: selected configuration; checked " +
+                "items only). Applies to the next launch.",
             inputSchema = toolSchema(
                 properties = buildJsonObject {
                     put("args", buildJsonObject {
                         put("type", "string")
-                        put("description", "Argument string, e.g. \"-dpcvars=r.slcp.X=1 -log\". Empty removes the $CUSTOM_NODE node.")
+                        put("description", "Whole argument string as ONE child node, e.g. \"-dpcvars=r.slcp.X=1 -log\". Empty removes the $CUSTOM_NODE node. Pass either 'args' or 'items'.")
+                    })
+                    put("items", buildJsonObject {
+                        put("type", "array")
+                        put(
+                            "description",
+                            "Children of the $CUSTOM_NODE folder, in order. Each entry is a plain argument string (a leaf), " +
+                                "or an object {name, checked?, items?, param?, join?, delimiter?, prefix?, postfix?}: with " +
+                                "'items' it is a folder (param=true emits its name before the children; join=true joins the " +
+                                "children with 'delimiter' (default \",\") between 'prefix' and 'postfix' (default \"\")), " +
+                                "without it a leaf. 'checked' defaults to the parent's. Empty array removes the $CUSTOM_NODE node."
+                        )
                     })
                     put("checked", buildJsonObject {
                         put("type", "boolean")
-                        put("description", "Whether the $CUSTOM_NODE node is active (default true). Plugin path only.")
+                        put("description", "Default checked state of every node written (default true); false writes the whole $CUSTOM_NODE subtree unchecked. Plugin path only.")
                     })
                     put("config", buildJsonObject {
                         put("type", "string")
@@ -176,12 +195,22 @@ object CmdLineArgsTools {
                     })
                     put("solution", solutionProp())
                 },
-                required = listOf("args"),
             ),
         ) { request ->
             val project = resolveProject(request.arguments.stringArg("solution")) ?: return@addTool noSolution()
-            val args = request.arguments.stringArg("args")?.trim().orEmpty()
+            val rawArgs = request.arguments.stringArg("args")
+            // Clients sometimes send the array JSON-encoded as a string.
+            val itemsArg = when (val raw = request.arguments?.get("items")) {
+                null -> null
+                is JsonArray -> raw
+                else -> runCatching { json.parseToJsonElement(raw.jsonPrimitive.content).jsonArray }.getOrNull()
+                    ?: return@addTool text("'items' must be an array.")
+            }
+            if ((rawArgs == null) == (itemsArg == null)) return@addTool text("Pass exactly one of 'args' or 'items'.")
             val checked = request.arguments.boolArg("checked") ?: true
+            val children = itemsArg?.mapNotNull { buildNode(it, checked) }
+                ?: listOfNotNull(rawArgs!!.trim().takeIf { it.isNotEmpty() }?.let { leaf(it, checked) })
+            val args = rawArgs?.trim() ?: collectArgs(children)
             if (argumentsService(project) == null) {
                 // Plugin inactive: set the run configuration's own program parameters —
                 // nothing overrides them at launch in this case.
@@ -212,19 +241,26 @@ object CmdLineArgsTools {
             val items = (rootObj["items"]?.jsonArray ?: JsonArray(emptyList()))
                 .filterNot { it.jsonObject["name"]?.jsonPrimitive?.contentOrNull == CUSTOM_NODE }
                 .toMutableList()
-            if (args.isNotEmpty()) {
-                items.add(buildJsonObject {
+            if (children.isNotEmpty()) {
+                // The plugin derives a non-empty folder's checked state from its children on load,
+                // so the folder's own flag is written to match rather than trusted.
+                items.add(withDerivedChecked(buildJsonObject {
                     put("name", CUSTOM_NODE)
-                    put("checked", checked)
-                    put("expanded", false)
-                    put("items", JsonArray(listOf(buildJsonObject { put("name", args); put("checked", true) })))
-                })
+                    put("expanded", true)
+                    put("items", JsonArray(children))
+                }, checked))
             }
 
             writeAndReload(project, file, doc, rootObj, JsonArray(items))
             text(
-                if (args.isEmpty()) "[$CUSTOM_NODE removed] from ${file.name}; plugin reloaded."
-                else "[$CUSTOM_NODE ${if (checked) "set" else "set (unchecked)"}] \"$args\" in ${file.name}; plugin reloaded — applies to the next launch."
+                if (children.isEmpty()) "[$CUSTOM_NODE removed] from ${file.name}; plugin reloaded."
+                else {
+                    val tree = StringBuilder()
+                    val mcp = items.takeLast(1).map { it.jsonObject }
+                    renderItems(JsonArray(mcp), "", "", tree)
+                    "[$CUSTOM_NODE ${if (checked) "set" else "set (unchecked)"}] in ${file.name} -> \"${collectArgs(mcp)}\"; " +
+                        "plugin reloaded — applies to the next launch.$tree"
+                }
             )
         }
 
@@ -404,37 +440,166 @@ object CmdLineArgsTools {
 
     // -- json tree helpers -----------------------------------------------------
 
-    /** Returns a copy of [items] with the node at [segments] re-checked, or null when not found. */
-    private fun toggleAtPath(items: JsonArray, segments: List<String>, checked: Boolean): JsonArray? {
-        if (segments.isEmpty()) return null
-        val head = segments.first()
-        var found = false
-        val out = items.map { el ->
-            val obj = el.jsonObject
-            if (!found && obj["name"]?.jsonPrimitive?.contentOrNull == head) {
-                found = true
-                if (segments.size == 1) {
-                    JsonObject(obj.toMutableMap().also { it["checked"] = JsonPrimitive(checked) })
-                } else {
-                    val sub = toggleAtPath(obj["items"]?.jsonArray ?: return null, segments.drop(1), checked) ?: return null
-                    JsonObject(obj.toMutableMap().also { it["items"] = sub })
-                }
-            } else el
+    /**
+     * Splits a node path: '/' separates names, "\/" is a literal '/', "\\" a literal '\'
+     * (any other backslash is literal, so Windows paths in names need no escaping).
+     */
+    private fun splitPath(path: String): List<String> {
+        val segments = mutableListOf<String>()
+        val current = StringBuilder()
+        var i = 0
+        while (i < path.length) {
+            val c = path[i]
+            if (c == '\\' && i + 1 < path.length && (path[i + 1] == '/' || path[i + 1] == '\\')) {
+                current.append(path[i + 1])
+                i += 2
+                continue
+            }
+            if (c == '/') {
+                segments.add(current.toString())
+                current.clear()
+            } else {
+                current.append(c)
+            }
+            i++
         }
-        return if (found) JsonArray(out) else null
+        segments.add(current.toString())
+        return segments
     }
 
-    private fun renderItems(items: JsonArray?, indent: String, sb: StringBuilder) {
+    /** Inverse of [splitPath] for one name. */
+    private fun escapeSegment(name: String): String {
+        val sb = StringBuilder()
+        name.forEachIndexed { i, c ->
+            when {
+                c == '/' -> sb.append("\\/")
+                c == '\\' && (i + 1 == name.length || name[i + 1] == '/' || name[i + 1] == '\\') -> sb.append("\\\\")
+                else -> sb.append(c)
+            }
+        }
+        return sb.toString()
+    }
+
+    private enum class CheckState { ON, OFF, MIXED }
+
+    private fun nodeName(obj: JsonObject) = obj["name"]?.jsonPrimitive?.contentOrNull
+    private fun flag(obj: JsonObject, key: String) = (obj[key] as? JsonPrimitive)?.booleanOrNull == true
+    private fun str(obj: JsonObject, key: String) = (obj[key] as? JsonPrimitive)?.contentOrNull
+    private fun children(obj: JsonObject) = (obj["items"] as? JsonArray)?.map { it.jsonObject }.orEmpty()
+    private fun JsonObject.with(key: String, value: JsonElement) = JsonObject(toMutableMap().also { it[key] = value })
+
+    /** Checked state as the plugin recomputes it on load (ArgumentNode.invalidate): a non-empty folder derives it from its children. */
+    private fun checkState(obj: JsonObject): CheckState {
+        val kids = children(obj)
+        if (kids.isEmpty()) return if (flag(obj, "checked")) CheckState.ON else CheckState.OFF
+        if (flag(obj, "singleChoice")) {
+            return kids.map(::checkState).firstOrNull { it != CheckState.OFF } ?: CheckState.OFF
+        }
+        return kids.map(::checkState).toSet().singleOrNull() ?: CheckState.MIXED
+    }
+
+    /** [obj] with its own flag set to its derived state ([fallback] for a leaf or empty folder). */
+    private fun withDerivedChecked(obj: JsonObject, fallback: Boolean): JsonObject {
+        val on = if (children(obj).isEmpty()) fallback else checkState(obj) != CheckState.OFF
+        return obj.with("checked", JsonPrimitive(on))
+    }
+
+    /** Copy of [obj] with its whole subtree set to [checked], mirroring the plugin UI's check()/uncheck(). */
+    private fun setCheckedDeep(obj: JsonObject, checked: Boolean): JsonObject {
+        val kids = children(obj)
+        if (obj["items"] !is JsonArray) return obj.with("checked", JsonPrimitive(checked))
+        // A single-choice folder keeps one child: the already-checked one, else the first.
+        val keep = if (checked && flag(obj, "singleChoice")) kids.indexOfFirst { checkState(it) != CheckState.OFF }.coerceAtLeast(0) else -1
+        val newKids = kids.mapIndexed { i, kid -> setCheckedDeep(kid, checked && (keep < 0 || i == keep)) }
+        return obj.with("items", JsonArray(newKids)).with("checked", JsonPrimitive(checked))
+    }
+
+    /** Returns a copy of [items] with the node at [segments] (and its subtree) re-checked, or null when not found. */
+    private fun toggleAtPath(items: JsonArray, segments: List<String>, checked: Boolean, singleChoice: Boolean = false): JsonArray? {
+        if (segments.isEmpty()) return null
+        val index = items.indexOfFirst { nodeName(it.jsonObject) == segments.first() }
+        if (index < 0) return null
+        val target = items[index].jsonObject
+        val out = items.toMutableList()
+        out[index] = if (segments.size == 1) {
+            setCheckedDeep(target, checked)
+        } else {
+            val sub = toggleAtPath(target["items"] as? JsonArray ?: return null, segments.drop(1), checked, flag(target, "singleChoice"))
+                ?: return null
+            withDerivedChecked(target.with("items", sub), checked)
+        }
+        // On load a single-choice folder keeps only its first checked child, so checking one unchecks the others.
+        if (checked && singleChoice) {
+            out.indices.filter { it != index }.forEach { out[it] = setCheckedDeep(out[it].jsonObject, false) }
+        }
+        return JsonArray(out)
+    }
+
+    private fun leaf(name: String, checked: Boolean) = buildJsonObject { put("name", name); put("checked", checked) }
+
+    /** One set_custom_command_line_args 'items' entry: a string is a leaf, an object a leaf or (with 'items') a folder. */
+    private fun buildNode(el: JsonElement, checked: Boolean): JsonObject? {
+        if (el is JsonPrimitive) return el.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }?.let { leaf(it, checked) }
+        val obj = el as? JsonObject ?: return null
+        val name = str(obj, "name")?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val on = (obj["checked"] as? JsonPrimitive)?.booleanOrNull ?: checked
+        val kids = obj["items"] as? JsonArray ?: return leaf(name, on)
+        val folder = buildJsonObject {
+            put("name", name)
+            if (flag(obj, "param")) put("param", true)
+            if (flag(obj, "join")) {
+                put("join", true)
+                put("join.delimiter", str(obj, "delimiter") ?: ",")
+                put("join.prefix", str(obj, "prefix") ?: "")
+                put("join.postfix", str(obj, "postfix") ?: "")
+            }
+            put("expanded", true)
+            put("items", JsonArray(kids.mapNotNull { buildNode(it, on) }))
+        }
+        return withDerivedChecked(folder, on)
+    }
+
+    /** Argument string of the checked [nodes], mirroring the plugin's CollectArgsVisitor (filters ignored). */
+    private fun collectArgs(nodes: List<JsonObject>, separator: String = " "): String =
+        nodes.filter { checkState(it) != CheckState.OFF }.map { node ->
+            val name = nodeName(node).orEmpty()
+            if (node["items"] !is JsonArray) return@map name
+            val join = flag(node, "join")
+            val body = if (join) {
+                str(node, "join.prefix").orEmpty() + collectArgs(children(node), str(node, "join.delimiter") ?: ",") + str(node, "join.postfix").orEmpty()
+            } else {
+                collectArgs(children(node))
+            }
+            when {
+                !flag(node, "param") -> body
+                join || body.isEmpty() -> name + body
+                else -> "$name $body"
+            }
+        }.filter { it.isNotEmpty() }.joinToString(separator)
+
+    /** One line per node: indented, derived checked state, then the toggle-ready path. */
+    private fun renderItems(items: JsonArray?, indent: String, parentPath: String, sb: StringBuilder) {
         items?.forEach { el ->
             val obj = el.jsonObject
-            val name = obj["name"]?.jsonPrimitive?.contentOrNull ?: return@forEach
-            val checked = obj["checked"]?.jsonPrimitive?.let { runCatching { it.boolean }.getOrNull() } == true
+            val name = nodeName(obj) ?: return@forEach
+            val path = parentPath + escapeSegment(name)
+            val mark = when (checkState(obj)) {
+                CheckState.ON -> "[x]"
+                CheckState.OFF -> "[ ]"
+                CheckState.MIXED -> "[~]"
+            }
+            val kind = buildList {
+                if (flag(obj, "param")) add("param")
+                if (flag(obj, "join")) add("join ${str(obj, "join.prefix").orEmpty()}a${str(obj, "join.delimiter") ?: ","}b${str(obj, "join.postfix").orEmpty()}")
+                if (flag(obj, "singleChoice")) add("single-choice")
+            }
             val filters = obj["filters"]?.jsonObject?.entries?.joinToString("; ") { (k, v) ->
                 "$k=${v.jsonArray.joinToString(",") { it.jsonPrimitive.contentOrNull ?: "?" }}"
             }
-            sb.append("\n$indent${if (checked) "[x]" else "[ ]"} $name")
+            sb.append("\n$indent$mark $path")
+            if (kind.isNotEmpty()) sb.append("   <${kind.joinToString(", ")}>")
             filters?.takeIf { it.isNotEmpty() }?.let { sb.append("   {$it}") }
-            renderItems(obj["items"]?.jsonArray, "$indent  ", sb)
+            renderItems(obj["items"] as? JsonArray, "$indent  ", "$path/", sb)
         }
     }
 
