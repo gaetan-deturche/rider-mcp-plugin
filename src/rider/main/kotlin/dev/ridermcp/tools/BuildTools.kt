@@ -205,11 +205,15 @@ object BuildTools {
     private fun format(r: BuildProjectResult): String {
         r.errorMessage?.let { return it }
 
+        // Verdict from error/cancel state, NOT from r.succeeded: the Succeeded
+        // property is only written by MSBuild-based runners — Rider's UE runner
+        // (CppUE4UbtBuildRunner) never sets it, so it stays false on successful
+        // UBT builds and made every UE build report FAILED with 0 errors.
         val status = when {
             r.cancelled -> "CANCELLED"
-            r.hasErrors || !r.succeeded -> "FAILED"
-            r.hasWarnings -> "SUCCEEDED (with warnings)"
+            r.hasErrors -> "FAILED"
             r.skipped -> "UP-TO-DATE (nothing to build)"
+            r.hasWarnings -> "SUCCEEDED (with warnings)"
             else -> "SUCCEEDED"
         }
 
