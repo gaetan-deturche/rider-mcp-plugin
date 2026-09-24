@@ -104,10 +104,10 @@ object directly) so the tag/condition reliably apply.
 
 | Tool | Purpose |
 |------|---------|
-| `list_command_line_args` | The plugin's argument tree (paths, checked, filters), the per-configuration enablement section, and effective args for the selected config; with the plugin inactive, the config's own program parameters |
-| `toggle_command_line_arg` | Check/uncheck a tree node by path (edits `<solution>.cmdlineargs.json`, triggers the plugin's reload) |
+| `list_command_line_args` | The plugin's argument tree — one line per node with its toggle-ready path, checked state as the plugin derives it on load (`[~]` = folder with mixed children), folder kind (param/join/single-choice) and filters — plus the per-configuration enablement section and effective args for the selected config; with the plugin inactive, the config's own program parameters |
+| `toggle_command_line_arg` | Check/uncheck a tree node by path (edits `<solution>.cmdlineargs.json`, triggers the plugin's reload). A folder flips its whole subtree like its UI checkbox; checking a child of a single-choice folder unchecks its siblings. A `/` inside a node name is written `\/` (e.g. `MCP/-ExecCmds=/open \/Game\/Maps\/X`) |
 | `enable_command_line_config` | Check/uncheck run CONFIGURATIONS in the plugin (the second gate: the tree only applies to checked configurations); `config="*"` recovers a wiped enablement list |
-| `set_custom_command_line_args` | Ad-hoc args via a dedicated top-level "MCP" node (`args=""` removes it); with the plugin inactive, writes the run configuration's program parameters directly (incl. UE C++ configs per active configuration\|platform) |
+| `set_custom_command_line_args` | Ad-hoc args via a dedicated top-level "MCP" folder. `items` writes one child node per entry — a plain arg string, or `{name, checked?, items?, param?, join?, delimiter?, prefix?, postfix?}` for folders such as a joined `-ExecCmds=` with one console command per child — so each can be flipped individually; `args` writes the whole string as a single child. `checked=false` writes the subtree unchecked; `items=[]`/`args=""` removes the node. With the plugin inactive, writes the run configuration's program parameters directly (checked items only; incl. UE C++ configs per active configuration\|platform) |
 
 **Crash tripwire (`DebugWatchTools.kt`)** — watch a debugged process for unexpected crashes without babysitting it:
 
@@ -222,8 +222,8 @@ attached (`softprops/action-gh-release`; the job grants `contents: write`).
 ```bash
 # bump pluginVersion in gradle.properties AND serverInfo in McpHttpServer.kt
 # (update README refs), commit, then:
-git tag v0.19.0
-git push origin v0.19.0      # CI builds and publishes the GitHub Release with the zip
+git tag v0.20.0
+git push origin v0.20.0      # CI builds and publishes the GitHub Release with the zip
 ```
 
 **Build on demand:** GitHub → *Actions → Build plugin → Run workflow*
@@ -234,7 +234,7 @@ permalink). A copy may also be committed under `dist/` for a version-pinned raw
 URL, e.g.:
 
 ```
-https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.19.0.zip
+https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.20.0.zip
 ```
 
 ## Status / TODO
