@@ -97,7 +97,8 @@ object DebugWatchTools {
                 "handle (from list_active_debug_sessions) next stops in a crash-like way: " +
                 "reason=unhandled_exception|exception with faulting thread + top frames, or " +
                 "reason=process_exited when it ends (stop re-polling). A crash-like stop recorded before " +
-                "this call — including during startup — is reported immediately rather than lost. Pauses " +
+                "this call — including during startup — is reported immediately rather than lost, exactly " +
+                "once (resuming the session clears it, so the next poll waits for a new stop). Pauses " +
                 "at enabled user breakpoints are IGNORED; they never complete this wait. A tw-… handle " +
                 "whose launch is still building replies [TIMEOUT] until its session starts. Replies " +
                 "starting with [TIMEOUT] mean still running: call again with the same handle to keep " +
@@ -130,18 +131,30 @@ object DebugWatchTools {
                         "[STOP · never_started] No armed launch with handle $handle — it expired or never " +
                             "existed. Call list_active_debug_sessions for current handles."
                     )
-                CrashTripwire.resolveSession(ticket)
-                    ?: withTimeoutOrNull(timeoutSec * 1000L) { ticket.awaitSession() }
-                    ?: return@addTool text(
+                // The launch may already have resolved to never_started (before-launch
+                // build failed / cancelled) — report it at once rather than polling on.
+                ticket.neverStartedReason?.let { return@addTool text(neverStartedPayload(ticket, handle, it)) }
+                val resolved = CrashTripwire.resolveSession(ticket)
+                if (resolved != null) {
+                    resolved
+                } else when (val outcome = withTimeoutOrNull(timeoutSec * 1000L) { ticket.awaitOutcome() }) {
+                    is CrashTripwire.Outcome.Started -> outcome.session
+                    is CrashTripwire.Outcome.NeverStarted ->
+                        return@addTool text(neverStartedPayload(ticket, handle, outcome.reason))
+                    null ->
                         if (ticket.isExpired)
-                            "[STOP · never_started] Launch \"${ticket.configName}\" (handle $handle) never " +
-                                "produced a debug session — the before-launch build likely failed. Check the " +
-                                "Build tool window; re-arm after a successful launch."
+                            return@addTool text(
+                                "[STOP · never_started] Launch \"${ticket.configName}\" (handle $handle) never " +
+                                    "produced a debug session — the before-launch build likely failed. Check the " +
+                                    "Build tool window; re-arm after a successful launch."
+                            )
                         else
-                            "[TIMEOUT] Launch \"${ticket.configName}\" (handle $handle) armed " +
-                                "${ticket.ageSeconds}s ago — debug session not started yet (before-launch " +
-                                "build). Call wait_for_stop again with the same handle."
-                    )
+                            return@addTool text(
+                                "[TIMEOUT] Launch \"${ticket.configName}\" (handle $handle) armed " +
+                                    "${ticket.ageSeconds}s ago — debug session not started yet (before-launch " +
+                                    "build). Call wait_for_stop again with the same handle."
+                            )
+                }
             } else {
                 liveSessions().firstOrNull { it.first == handle }?.second
                     ?: return@addTool text(
@@ -157,9 +170,12 @@ object DebugWatchTools {
             // A stop recorded before this poll wins over the session's current
             // state: a crash that already killed the process must still report as
             // a crash, not as a bare process_exited.
+            // Delivered once: consumed here, so the next poll waits for a NEW stop.
             CrashTripwire.bufferedStop(session)?.let { buffered ->
+                CrashTripwire.consume(session, buffered)
                 if (buffered.reason == "process_exited") return@addTool text(exitedPayload(session, handle))
-                return@addTool text(bufferedPayload(session, handle, buffered))
+                if (session.isSuspended || session.isStopped) return@addTool text(bufferedPayload(session, handle, buffered))
+                // Running again since it was recorded: stale — fall through to wait for the next stop.
             }
             if (session.isStopped) return@addTool text(exitedPayload(session, handle))
             if (session.isSuspended) return@addTool text(stopPayload(session, handle, "already_paused"))
@@ -181,6 +197,8 @@ object DebugWatchTools {
                         "[TIMEOUT] \"${session.sessionName}\" (handle $handle) still running after ${timeoutSec}s — " +
                             "call wait_for_stop again with the same handle to keep watching."
                     )
+                // The tripwire buffered this same stop too; it's delivered now.
+                CrashTripwire.bufferedStop(session)?.let { CrashTripwire.consume(session, it) }
                 if (reason == "process_exited") return@addTool text(exitedPayload(session, handle))
                 text(stopPayload(session, handle, reason))
             } finally {
@@ -188,6 +206,11 @@ object DebugWatchTools {
             }
         }
     }
+
+    private fun neverStartedPayload(ticket: CrashTripwire.Ticket, handle: String, reason: String) =
+        "[STOP · never_started] Launch \"${ticket.configName}\" (handle $handle) produced no debug session — " +
+            "$reason. Read the Build tool window (read_tool_window id=Build) for the failure, then fix it and " +
+            "relaunch. Stop re-polling this handle."
 
     private fun exitedPayload(session: XDebugSession, handle: String) =
         "[STOP · process_exited] \"${session.sessionName}\" (handle $handle) ended. Stop re-polling; " +

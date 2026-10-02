@@ -1,5 +1,9 @@
 package dev.ridermcp.tools
 
+import com.intellij.execution.ExecutionListener
+import com.intellij.execution.ExecutionManager
+import com.intellij.execution.executors.DefaultDebugExecutor
+import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.xdebugger.XDebugProcess
@@ -22,7 +26,8 @@ import java.util.WeakHashMap
  *  - a crash during startup, before the client could obtain a session handle;
  *  - a crash in the gap between two poll slices.
  * The first crash-like stop per session is BUFFERED, so a later poll reports it
- * instead of waiting for a second crash that will never come.
+ * instead of waiting for a second crash that will never come. It is delivered
+ * once: consumed when reported, cleared when the session resumes.
  *
  * A launch arms a *ticket* ([Ticket], handle `tw-N`) before the process exists —
  * the debug session only appears after the before-launch build, which for Unreal
@@ -54,6 +59,27 @@ object CrashTripwire {
             if (stop != null) return
             stop = BufferedStop(reason, position, threadName, System.currentTimeMillis())
         }
+
+        /** [delivered] was reported: later polls must not replay it (no-op if a newer stop replaced it). */
+        @Synchronized
+        fun consume(delivered: BufferedStop) {
+            if (stop === delivered) stop = null
+        }
+
+        /** The session resumed, so the buffered stop is no longer current. */
+        @Synchronized
+        fun clear() {
+            stop = null
+        }
+    }
+
+    /** The resolved fate of an armed launch. */
+    sealed class Outcome {
+        /** The debug session started (the before-launch build succeeded). */
+        class Started(val session: XDebugSession) : Outcome()
+
+        /** No session: the before-launch build failed or the launch was cancelled. */
+        class NeverStarted(val reason: String) : Outcome()
     }
 
     /** A launch armed before its debug session exists. */
@@ -69,7 +95,7 @@ object CrashTripwire {
         private val preexisting: List<XDebugSession>,
     ) {
         val armedAtMs: Long = System.currentTimeMillis()
-        private val binding = CompletableDeferred<XDebugSession>()
+        private val outcome = CompletableDeferred<Outcome>()
 
         internal fun predates(s: XDebugSession) = preexisting.any { it === s }
 
@@ -77,16 +103,32 @@ object CrashTripwire {
         var session: XDebugSession? = null
             private set
 
+        /** Set when the launch produced no session (before-launch build failed / cancelled). */
+        @Volatile
+        var neverStartedReason: String? = null
+            private set
+
         val ageSeconds: Long get() = (System.currentTimeMillis() - armedAtMs) / 1000
-        val isExpired: Boolean get() = session == null && System.currentTimeMillis() - armedAtMs > PENDING_TTL_MS
+
+        /** A still-pending ticket that aged out (no session, not yet resolved never-started). */
+        val isExpired: Boolean
+            get() = session == null && neverStartedReason == null &&
+                System.currentTimeMillis() - armedAtMs > PENDING_TTL_MS
 
         internal fun bind(s: XDebugSession) {
+            if (outcome.isCompleted) return
             session = s
-            binding.complete(s)
+            outcome.complete(Outcome.Started(s))
         }
 
-        /** Suspends until the launch's debug session starts (caller applies the timeout). */
-        suspend fun awaitSession(): XDebugSession = binding.await()
+        internal fun markNeverStarted(reason: String) {
+            if (outcome.isCompleted) return
+            neverStartedReason = reason
+            outcome.complete(Outcome.NeverStarted(reason))
+        }
+
+        /** Suspends until the launch resolves — session started, or never-started (caller applies the timeout). */
+        suspend fun awaitOutcome(): Outcome = outcome.await()
     }
 
     private var ticketSeq = 0
@@ -105,7 +147,11 @@ object CrashTripwire {
         ensureInstalled(project)
         return synchronized(tickets) {
             tickets.entries.removeIf { (_, t) ->
-                t.isExpired || (t.session == null && t.project == project && t.configName == configName)
+                // Prune anything unbound that aged out (stuck-pending or an old
+                // never-started), and supersede the still-pending ticket of this
+                // same configuration (a relaunch).
+                (t.session == null && System.currentTimeMillis() - t.armedAtMs > PENDING_TTL_MS) ||
+                    (t.session == null && t.neverStartedReason == null && t.project == project && t.configName == configName)
             }
             val ticket = Ticket(
                 TICKET_PREFIX + (++ticketSeq),
@@ -121,10 +167,10 @@ object CrashTripwire {
 
     fun ticket(id: String): Ticket? = synchronized(tickets) { tickets[id] }
 
-    /** Tickets still waiting for their debug session to start. */
+    /** Tickets still waiting for their debug session to start (excludes never-started). */
     fun pendingTickets(): List<Ticket> = synchronized(tickets) {
-        tickets.entries.removeIf { (_, t) -> t.isExpired }
-        tickets.values.filter { it.session == null }
+        tickets.entries.removeIf { (_, t) -> t.session == null && System.currentTimeMillis() - t.armedAtMs > PENDING_TTL_MS }
+        tickets.values.filter { it.session == null && it.neverStartedReason == null }
     }
 
     /** The ticket a live session was launched by, if any (for reporting). */
@@ -149,16 +195,27 @@ object CrashTripwire {
             override fun sessionStopped() {
                 watch.record("process_exited", null, null)
             }
+
+            // Resumed (plugin resume tool or Rider UI): the stop was seen and handled.
+            override fun sessionResumed() {
+                watch.clear()
+            }
         })
         watch
     }
 
     fun bufferedStop(session: XDebugSession): BufferedStop? = watches[session]?.stop
 
-    /** Subscribes to debug-session starts in [project] so tickets can bind. */
+    /** Marks a reported buffered stop as delivered, so the next poll waits for a NEW stop. */
+    fun consume(session: XDebugSession, delivered: BufferedStop) {
+        watches[session]?.consume(delivered)
+    }
+
+    /** Subscribes to debug-session starts and launch failures in [project] so tickets can resolve. */
     private fun ensureInstalled(project: Project) {
         if (project.isDisposed || !installedIn.add(project)) return
-        project.messageBus.connect().subscribe(
+        val connection = project.messageBus.connect()
+        connection.subscribe(
             XDebuggerManager.TOPIC,
             object : XDebuggerManagerListener {
                 override fun processStarted(debugProcess: XDebugProcess) {
@@ -167,6 +224,36 @@ object CrashTripwire {
                 }
             },
         )
+        // A launch whose before-launch build fails (or that the user cancels) never
+        // produces a debug session: the execution pipeline fires processNotStarted
+        // instead. Resolve the matching ticket to never_started at once, so a waiter
+        // isn't left polling [TIMEOUT] until the ticket's TTL.
+        connection.subscribe(
+            ExecutionManager.EXECUTION_TOPIC,
+            object : ExecutionListener {
+                override fun processNotStarted(executorId: String, env: ExecutionEnvironment) {
+                    runCatching { onProcessNotStarted(executorId, env) }
+                        .onFailure { log.warn("Crash tripwire: processNotStarted handling failed", it) }
+                }
+            },
+        )
+    }
+
+    /**
+     * Resolves the pending ticket for a launch that produced no process (before-launch
+     * build failed, or cancelled) to never_started. Only debug launches arm a ticket.
+     */
+    private fun onProcessNotStarted(executorId: String, env: ExecutionEnvironment) {
+        if (executorId != DefaultDebugExecutor.EXECUTOR_ID) return
+        val configName = env.runnerAndConfigurationSettings?.name ?: env.runProfile.name
+        val ticket = synchronized(tickets) {
+            tickets.values
+                .filter { it.session == null && it.neverStartedReason == null && it.project === env.project && !it.isExpired }
+                .filter { it.configName.equals(configName, ignoreCase = true) }
+                .maxByOrNull { it.armedAtMs }
+        } ?: return
+        ticket.markNeverStarted("before-launch build failed or the launch was cancelled")
+        log.info("Crash tripwire ${ticket.id}: processNotStarted → never_started (\"$configName\", ${env.project.name})")
     }
 
     /**
@@ -178,7 +265,7 @@ object CrashTripwire {
     private fun onSessionStarted(session: XDebugSession) {
         val ticket = synchronized(tickets) {
             val pending = tickets.values
-                .filter { it.session == null && it.project === session.project && !it.isExpired }
+                .filter { it.session == null && it.neverStartedReason == null && it.project === session.project && !it.isExpired }
                 .sortedBy { it.armedAtMs }
             pending.filter { !it.predates(session) }
                 .let { c -> c.firstOrNull { it.configName.equals(session.sessionName, ignoreCase = true) } ?: c.singleOrNull() }
@@ -198,7 +285,7 @@ object CrashTripwire {
      */
     fun resolveSession(ticket: Ticket): XDebugSession? {
         ticket.session?.let { return it }
-        if (ticket.project.isDisposed) return null
+        if (ticket.neverStartedReason != null || ticket.project.isDisposed) return null
         val claimed = synchronized(tickets) { tickets.values.mapNotNull { it.session } }
         val candidates = XDebuggerManager.getInstance(ticket.project).debugSessions
             .filter { s -> !s.isStopped && !ticket.predates(s) && claimed.none { it === s } }
