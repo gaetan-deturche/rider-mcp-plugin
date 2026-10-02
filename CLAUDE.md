@@ -44,12 +44,17 @@ row per target is what lets the client discover its handle unambiguously.
 crash-like stops only: `unhandled_exception` (pause matching no user breakpoint — also covers manual
 pause/step, caveat included) / `exception` (exception-type non-line bp via
 `XDebugSessionImpl.activeNonLineBreakpoint`) / `already_paused` / `process_exited` /
-`never_started` (armed launch, no session — before-launch build failed); **enabled user breakpoints
+`never_started` (armed launch, no session — before-launch build failed or launch cancelled;
+resolved at once from `ExecutionManager.EXECUTION_TOPIC` → `ExecutionListener.processNotStarted`,
+not at the ticket's TTL — and `run_configuration` itself waits ≤12s on the ticket outcome so its reply
+carries the before-launch build result); **enabled user breakpoints
 are filtered INSIDE the wait**, so manual breakpoints never wake the watcher. Impl:
 `XDebugSession.addSessionListener` + `CompletableDeferred` + `withTimeoutOrNull`; payload = position,
 thread, top 10 frames (DebuggerTools' `awaitFrames`/`frameLabel`, internal). A buffered stop is
 re-rendered from the live suspend context when the process is still suspended (the normal case),
-else from the snapshot taken at stop time.
+else from the snapshot taken at stop time. It is **delivered once**: consumed when reported, cleared
+on `sessionResumed` (plugin `resume` or Rider UI), and skipped as stale if the session is running
+again — otherwise every later poll replayed the old stop ("recorded 65s ago") after a resume.
 **Claude side** = the user-level `rider-run` skill (`~/.claude/skills/rider-run/`, sibling
 `ue-attach` for an instance the USER started): after the launch, `run_in_background`
 `arm_tripwire.sh [handle]` — a curl loop hitting the plugin **directly on :6363** (NOT via
@@ -94,7 +99,7 @@ Rider's Breakpoints dialog (Ctrl+Shift+F8).
 - The old failure (`java.io.IOException: Unable to establish loopback connection`) was AF_UNIX-under-AppData breaking `Selector.open()` in Claude Desktop's MSIX process tree — fix by setting `TMP`/`TEMP` to a dir outside AppData (e.g. `H:\Dev\tmp-gradle`) on the gradlew invocation. The IntelliJ-terminal `execute_terminal_command` route still works but is no longer required.
 - Needs **JBR 25** toolchain (`jvmToolchain(25)`): pass `-Dorg.gradle.java.installations.paths="C:\Program Files\JetBrains\IntelliJ IDEA 2026.1\jbr"`. **Since the 2026.2 platform (2026-07-27) also set `JAVA_HOME` to that JBR 25** — the 2026.2 `rider-model.jar` is Java-25 bytecode and `:protocol:rdgen` forks `java` from JAVA_HOME (the machine's Adoptium 21 → `UnsupportedClassVersionError: class file version 69.0`).
 - **Broken .NET install gotcha:** `:buildReSharperHost` fails because SDK `9.0.312` wants runtime `Microsoft.NETCore.App 9.0.14` but only `9.0.11` is installed. Work around with `$env:DOTNET_ROLL_FORWARD='Major'` (rolls the SDK host onto the installed `10.0.1` runtime). The user should ideally install the 9.0.14+ runtime to fix this permanently.
-- Full command: `$env:DOTNET_ROLL_FORWARD='Major'; .\gradlew.bat buildPlugin --console=plain "-Dorg.gradle.java.installations.paths=C:\Program Files\JetBrains\IntelliJ IDEA 2026.1\jbr"`. Output zip → `build/distributions/rider-mcp-plugin-<ver>.zip`.
+- Full command: `$env:JAVA_HOME='C:\Program Files\JetBrains\IntelliJ IDEA 2026.1\jbr'; $env:DOTNET_ROLL_FORWARD='Major'; .\gradlew.bat buildPlugin --console=plain "-Dorg.gradle.java.installations.paths=C:\Program Files\JetBrains\IntelliJ IDEA 2026.1\jbr"`. Output zip → `build/distributions/rider-mcp-plugin-<ver>.zip`.
 - Deprecation warning "incompatible with Gradle 10" comes from the `rdgen` plugin (`Task.project` at execution time) — not actionable, harmless on Gradle 9.6.
 
 **Platform migration 261 → 262 (Rider 2026.2, done 2026-07-27, v0.15.0):** bump `platformVersion=2026.2` (exact string per the intellij-repository metadata — no `.0`), `rdVersion`/rd-gen `useModule` `2026.2.0`, `pluginSince/UntilBuild 262`, csproj `JetBrains.Rider.SDK 2026.2.*`. Ktor stayed 3.4.1 → MCP SDK/transport untouched; Kotlin 2.3.0 still fine. TWO breaks: (1) rdgen needs JAVA_HOME = JDK/JBR **25** (see build section); (2) **`Project.solution` (`SolutionHostExtensionsKt`, pkg `com.jetbrains.rider.projectView`) moved out of core `intellij.rider.jar` into product module `intellij.rider.rdclient.dotnet`** → add `bundledModule("intellij.rider.rdclient.dotnet")` in build.gradle.kts, else `Unresolved reference 'solution'`. Diagnose moved classes by scanning the installed Rider's jars for the declaring `*Kt` facade + `product-info.json` `layout[]` for the module name. NB: an in-place update can leave a stale install dir name (`JetBrains Rider 261.22158.211` actually contains 2026.2 build `262.8665.328` — trust `product-info.json`, not the folder).

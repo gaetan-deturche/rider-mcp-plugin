@@ -14,6 +14,7 @@ import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -31,6 +32,13 @@ import kotlinx.serialization.json.put
  * backend involvement here.
  */
 object RunConfigTools {
+
+    /**
+     * How long run_configuration waits for the before-launch build to resolve
+     * (session started, or never_started) before returning. Kept well under the
+     * MCP/HTTP response timeout; a longer cold build defers to the tripwire.
+     */
+    private const val BUILD_RESULT_WAIT_MS = 12_000L
 
     fun register(server: Server) {
         server.addTool(
@@ -64,9 +72,13 @@ object RunConfigTools {
                 "start so a debugger attaches; pass debug=false for a plain Run. Use " +
                 "list_run_configurations to discover names. Runs without a confirmation prompt (unlike the " +
                 "built-in jetbrains run tool), so shell can stay gated while launches are frictionless. " +
-                "A debug launch also ARMS THE CRASH TRIPWIRE automatically and returns its handle " +
-                "(tripwire armed (handle=tw-N)): crash-like stops are captured server-side from process " +
-                "start, and the reply names the watcher command to run detached so the client is woken.",
+                "RETURNS THE BEFORE-LAUNCH BUILD RESULT: it waits briefly for the launch to resolve and " +
+                "replies '[DEBUG · never_started]' when the before-launch build fails or the launch is " +
+                "cancelled, else '[DEBUG · started]' once the debug session is up (a long cold build exceeds " +
+                "the wait and defers to the tripwire). A debug launch also ARMS THE CRASH TRIPWIRE and returns " +
+                "its handle (tripwire armed (handle=tw-N)): crash-like stops AND a before-launch build failure " +
+                "are captured server-side from process start, and the reply names the watcher command to run " +
+                "detached so the client is woken.",
             inputSchema = toolSchema(
                 properties = buildJsonObject {
                     put("name", buildJsonObject {
@@ -123,21 +135,43 @@ object RunConfigTools {
             withContext(Dispatchers.EDT) {
                 ProgramRunnerUtil.executeConfiguration(settings, executor)
             }
+
             val mode = if (debug) "DEBUG" else "RUN"
             val where = project.basePath ?: project.name
-            val sb = StringBuilder(
-                "[$mode · started] \"$name\" [${settings.type.displayName}] in '${project.name}' ($where). " +
-                    "Before-launch build (if any) runs first; watch the Run/Debug tool window."
-            )
-            if (ticket != null) {
-                sb.append("\ntripwire armed (handle=${ticket.id}) — crash-like stops are captured from process ")
-                sb.append("start, so a startup crash is not lost even if the watcher below starts later.")
-                sb.append("\nREQUIRED to actually be woken: start the wake watcher detached now ")
-                sb.append("(run_in_background), it exits with the crash payload:")
-                sb.append("\n  bash ${armScriptPath()} ${ticket.id}")
-            } else {
-                sb.append("\n(no tripwire: not a debug launch — no debugger attaches, so a crash cannot be caught)")
+            val head = "\"$name\" [${settings.type.displayName}] in '${project.name}' ($where)"
+
+            // Non-debug launches don't arm a ticket and attach no debugger — report
+            // and return (no before-launch build result to await, no tripwire).
+            if (ticket == null) {
+                return@addTool text(
+                    "[$mode · started] $head. Before-launch build (if any) runs first; watch the Run/Debug " +
+                        "tool window.\n(no tripwire: not a debug launch — no debugger attaches, so a crash " +
+                        "cannot be caught)"
+                )
             }
+
+            // Return the before-launch build result: wait briefly for the launch to
+            // resolve (it usually does in seconds). A long cold build exceeds the
+            // bound, so we report "still building" and let the tripwire surface
+            // never_started promptly if it then fails.
+            val sb = StringBuilder()
+            when (val outcome = withTimeoutOrNull(BUILD_RESULT_WAIT_MS) { ticket.awaitOutcome() }) {
+                is CrashTripwire.Outcome.NeverStarted -> return@addTool text(
+                    "[$mode · never_started] $head — ${outcome.reason}. The before-launch build failed or the " +
+                        "launch was cancelled; no process started and nothing is watching. Read the Build tool " +
+                        "window (read_tool_window id=Build), fix it, and relaunch."
+                )
+                is CrashTripwire.Outcome.Started ->
+                    sb.append("[$mode · started] $head — before-launch build succeeded, debug session is up.")
+                null ->
+                    sb.append("[$mode · started] $head. Before-launch build still running after " +
+                        "${BUILD_RESULT_WAIT_MS / 1000}s (not yet confirmed) — watch the Run/Debug tool window.")
+            }
+            sb.append("\ntripwire armed (handle=${ticket.id}) — crash-like stops are captured from process start, ")
+            sb.append("and a before-launch build failure resolves to never_started at once.")
+            sb.append("\nREQUIRED to actually be woken: start the wake watcher detached now ")
+            sb.append("(run_in_background), it exits with the crash or never_started payload:")
+            sb.append("\n  bash ${armScriptPath()} ${ticket.id}")
             text(sb.toString())
         }
 
