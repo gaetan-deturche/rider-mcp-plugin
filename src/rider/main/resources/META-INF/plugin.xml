@@ -26,6 +26,8 @@
 
         <!-- Balloon notifications for the manual start action. -->
         <notificationGroup id="RiderMcp" displayType="BALLOON"/>
+        <!-- Sticky: an MCP-set solution configuration stays visible until reverted or restored. -->
+        <notificationGroup id="RiderMcpConfig" displayType="STICKY_BALLOON"/>
     </extensions>
 
     <!-- Primary auto-start: fires on IDE start, no solution needed. -->

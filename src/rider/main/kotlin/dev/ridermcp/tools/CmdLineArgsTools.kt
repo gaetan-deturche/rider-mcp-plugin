@@ -4,6 +4,7 @@ import com.intellij.execution.CommonProgramRunConfigurationParameters
 import com.intellij.execution.RunManager
 import com.intellij.execution.RunnerAndConfigurationSettings
 import com.intellij.ide.plugins.PluginManagerCore
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.project.Project
@@ -320,6 +321,41 @@ object CmdLineArgsTools {
         }
     }
 
+    // -- launch-time helpers (run_configuration) ------------------------------
+
+    /** The argument string a launch of [settings] would get: the plugin's computed args, or the config's own when inactive. */
+    suspend fun effectiveArgs(project: Project, settings: RunnerAndConfigurationSettings): String? =
+        withContext(Dispatchers.EDT) {
+            val svc = argumentsService(project)
+            if (svc == null) getDirectArgs(project, settings)
+            else runCatching { svc.javaClass.methods.first { it.name == "getArguments" }.invoke(svc, settings) as String }.getOrNull()
+        }
+
+    /** Args of the checked $CUSTOM_NODE node, or null when the plugin is inactive or the node is absent/unchecked. */
+    fun mcpNodeArgs(project: Project): String? {
+        argumentsService(project) ?: return null
+        val file = stateFile(project)
+        if (!file.exists()) return null
+        val root = runCatching { json.parseToJsonElement(file.readText()).jsonObject["root"]?.jsonObject }.getOrNull() ?: return null
+        val node = children(root).firstOrNull { nodeName(it) == CUSTOM_NODE } ?: return null
+        if (checkState(node) == CheckState.OFF) return null
+        return collectArgs(listOf(node))
+    }
+
+    /** Unchecks the $CUSTOM_NODE node if it still yields [expectedArgs], so a later re-set isn't undone. */
+    fun uncheckMcpNodeIfUnchanged(project: Project, expectedArgs: String): Boolean {
+        if (mcpNodeArgs(project) != expectedArgs) return false
+        val file = stateFile(project)
+        val doc = json.parseToJsonElement(file.readText()).jsonObject
+        val rootObj = doc["root"]?.jsonObject ?: return false
+        val newItems = toggleAtPath(rootObj["items"]?.jsonArray ?: return false, listOf(CUSTOM_NODE), false) ?: return false
+        writeState(file, doc, rootObj, newItems)
+        val svc = argumentsService(project) ?: return true
+        val reload = svc.javaClass.methods.firstOrNull { it.name == "reload" || it.name.startsWith("reload$") } ?: return true
+        ApplicationManager.getApplication().invokeLater { runCatching { reload.invoke(svc) } }
+        return true
+    }
+
     // -- plugin access ---------------------------------------------------------
 
     private fun argumentsService(project: Project): Any? {
@@ -373,10 +409,14 @@ object CmdLineArgsTools {
     /** Mirrors the plugin's locateStateFile() for the Rider branch. */
     private fun stateFile(project: Project) = File(project.basePath, project.name + ".cmdlineargs.json")
 
-    private suspend fun writeAndReload(project: Project, file: File, doc: JsonObject, rootObj: JsonObject, newItems: JsonArray) {
+    private fun writeState(file: File, doc: JsonObject, rootObj: JsonObject, newItems: JsonArray) {
         val newRoot = JsonObject(rootObj.toMutableMap().also { it["items"] = newItems })
         val newDoc = JsonObject(doc.toMutableMap().also { it["root"] = newRoot })
         file.writeText(json.encodeToString(JsonObject.serializer(), newDoc))
+    }
+
+    private suspend fun writeAndReload(project: Project, file: File, doc: JsonObject, rootObj: JsonObject, newItems: JsonArray) {
+        writeState(file, doc, rootObj, newItems)
         // reload() is `internal` — the Kotlin compiler may mangle it to reload$<module>.
         val svc = argumentsService(project) ?: return
         val reload = svc.javaClass.methods.firstOrNull { it.name == "reload" || it.name.startsWith("reload$") } ?: return
