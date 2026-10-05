@@ -158,12 +158,12 @@ object SolutionConfigTools {
             }
             val ov = Override(baseline, target, null)
             ov.notification = NotificationGroupManager.getInstance().getNotificationGroup("RiderMcpConfig")
-                .createNotification(
+                ?.createNotification(
                     "Solution configuration set by MCP",
                     "${label(target)} (your configuration: ${label(baseline)})",
                     NotificationType.INFORMATION,
                 )
-                .addAction(NotificationAction.createSimpleExpiring("Revert to ${label(baseline)}") { restoreBaseline(project) })
+                ?.addAction(NotificationAction.createSimpleExpiring("Revert to ${label(baseline)}") { restoreBaseline(project) })
             overrides[project] = ov
             ov.notification?.notify(project)
         }
@@ -190,8 +190,8 @@ object SolutionConfigTools {
     /** Short-lived notice for an automatic restore. */
     fun notifyInfo(project: Project, title: String, content: String) {
         NotificationGroupManager.getInstance().getNotificationGroup("RiderMcp")
-            .createNotification(title, content, NotificationType.INFORMATION)
-            .notify(project)
+            ?.createNotification(title, content, NotificationType.INFORMATION)
+            ?.notify(project)
     }
 
     private fun text(s: String) = CallToolResult(content = listOf(TextContent(s)))
