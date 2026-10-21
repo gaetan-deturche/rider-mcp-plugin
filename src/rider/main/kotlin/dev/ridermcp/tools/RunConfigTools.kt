@@ -2,6 +2,7 @@ package dev.ridermcp.tools
 
 import com.intellij.execution.ExecutionListener
 import com.intellij.execution.ExecutionManager
+import com.intellij.execution.ExecutionTargetManager
 import com.intellij.execution.Executor
 import com.intellij.execution.ProgramRunnerUtil
 import com.intellij.execution.RunManager
@@ -16,12 +17,14 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.project.Project
 import com.jetbrains.rider.projectView.SolutionConfigurationManager
+import com.jetbrains.rider.run.devices.DevicesConfiguration
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.buildJsonObject
@@ -48,6 +51,9 @@ object RunConfigTools {
      * MCP/HTTP response timeout; a longer cold build defers to the tripwire.
      */
     private const val BUILD_RESULT_WAIT_MS = 12_000L
+
+    /** How long run_configuration waits for the execution target to be able to run the configuration. */
+    private const val TARGET_WAIT_MS = 5_000L
 
     fun register(server: Server) {
         server.addTool(
@@ -78,9 +84,10 @@ object RunConfigTools {
             name = "run_configuration",
             description = "Launches a run/debug configuration by name in the open solution, running its " +
                 "normal before-launch build first (exactly like clicking Run/Debug). Pass configuration/" +
-                "platform to launch an explicit target: it is set and verified before firing, and refused " +
-                "on a mismatch. The reply's first line echoes the effective 'configuration | platform · args'. " +
-                "By default (restore=true) the user's own solution configuration and the MCP args node are " +
+                "platform (and device, for configurations with a device selector) to launch an explicit " +
+                "target: it is set and verified before firing, and refused on a mismatch. The reply's first " +
+                "line echoes the effective 'configuration | platform · device · args'. By default " +
+                "(restore=true) the user's own solution configuration, device and the MCP args node are " +
                 "put back when the session ends. Defaults to a DEBUG " +
                 "start so a debugger attaches; pass debug=false for a plain Run. Use " +
                 "list_run_configurations to discover names. Runs without a confirmation prompt (unlike the " +
@@ -110,9 +117,13 @@ object RunConfigTools {
                         put("type", "string")
                         put("description", "Solution platform, e.g. 'Win64'. Optional when the configuration exists for only one platform.")
                     })
+                    put("device", buildJsonObject {
+                        put("type", "string")
+                        put("description", "Device to launch on, for configurations with a device selector (see list_devices): exact name or a unique substring. Set after configuration/platform and verified before launching; omit to keep the selected one.")
+                    })
                     put("restore", buildJsonObject {
                         put("type", "boolean")
-                        put("description", "Default true: when this session ends (or never starts), put back the user's own solution configuration if MCP changed it, and uncheck the MCP launch-args node if it is unchanged. Pass false to keep both, e.g. for a batch of runs.")
+                        put("description", "Default true: when this session ends (or never starts), put back the user's own solution configuration and device if MCP changed them, and uncheck the MCP launch-args node if it is unchanged. Pass false to keep them, e.g. for a batch of runs.")
                     })
                     put("solution", buildJsonObject {
                         put("type", "string")
@@ -180,23 +191,49 @@ object RunConfigTools {
                 )
             }
 
+            // Device after configuration/platform: the device list can depend on them.
+            val wantDevice = request.arguments.stringArg("device")?.trim().orEmpty()
+            if (wantDevice.isNotEmpty()) {
+                when (val d = DeviceTools.apply(project, settings, wantDevice)) {
+                    is DeviceTools.Apply.Error -> return@addTool text("[$mode · not launched] \"$name\": ${d.message}")
+                    is DeviceTools.Apply.Done -> if (d.previous != d.device)
+                        configNote += "\ndevice set by MCP: ${d.device.name} (was ${d.previous?.name ?: "<none>"})"
+                }
+            }
+
+            // Rider resolves the execution target asynchronously (e.g. while the solution
+            // loads); launching before it can run fails in a balloon, so refuse here instead.
+            val targetReady = withTimeoutOrNull(TARGET_WAIT_MS) {
+                while (!ExecutionTargetManager.canRun(settings.configuration, ExecutionTargetManager.getActiveTarget(project))) delay(200)
+            } != null
+            if (!targetReady) return@addTool text(
+                "[$mode · not launched] \"$name\": execution target \"${ExecutionTargetManager.getActiveTarget(project).displayName}\" " +
+                    "can't run it (solution still loading, or no device selected) — retry, or check list_devices."
+            )
+
             // Echo what is actually being launched, so a wrong target or stale args
             // are visible in the first line of the reply.
             val args = CmdLineArgsTools.effectiveArgs(project, settings)?.takeIf { it.isNotBlank() } ?: "(none)"
-            val head = "\"$name\" — ${SolutionConfigTools.label(mgr?.activeConfigurationAndPlatform)} · args: $args"
+            val device = if (settings.configuration is DevicesConfiguration && runManager.selectedConfiguration === settings)
+                DeviceTools.activeDevice(project)?.let { " · device: ${it.name}" }.orEmpty() else ""
+            val head = "\"$name\" — ${SolutionConfigTools.label(mgr?.activeConfigurationAndPlatform)}$device · args: $args"
             val context = "\n  [${settings.type.displayName}] in '${project.name}' (${project.basePath ?: project.name})"
 
             // Arm the restore BEFORE firing so this launch's execution id is captured.
             val mcpArgs = if (restore) CmdLineArgsTools.mcpNodeArgs(project) else null
             val baseline = SolutionConfigTools.baselineLabel(project)
+            val deviceBaseline = DeviceTools.baselineLabel(project)
             val restoreNote = when {
-                !restore -> "\nrestore: off — the toolbar configuration and MCP args stay as they are after the session."
-                baseline == null && mcpArgs == null -> ""
+                !restore -> "\nrestore: off — the toolbar configuration, device and MCP args stay as they are after the session."
+                baseline == null && deviceBaseline == null && mcpArgs == null -> ""
                 else -> {
                     armRestore(project, settings, executor.id, mcpArgs)
                     "\nrestore when this session ends (or never starts): " +
-                        listOfNotNull(baseline?.let { "solution configuration → $it" }, mcpArgs?.let { "MCP args unchecked" })
-                            .joinToString(", ") + " — pass restore=false to keep (e.g. a batch of runs)."
+                        listOfNotNull(
+                            baseline?.let { "solution configuration → $it" },
+                            deviceBaseline?.let { "device → $it" },
+                            mcpArgs?.let { "MCP args unchecked" },
+                        ).joinToString(", ") + " — pass restore=false to keep (e.g. a batch of runs)."
                 }
             }
 
@@ -311,6 +348,7 @@ object RunConfigTools {
             ApplicationManager.getApplication().invokeLater {
                 if (project.isDisposed) return@invokeLater
                 val parts = listOfNotNull(
+                    DeviceTools.restoreBaseline(project),
                     SolutionConfigTools.restoreBaseline(project),
                     if (mcpArgs != null && CmdLineArgsTools.uncheckMcpNodeIfUnchanged(project, mcpArgs)) "MCP launch args unchecked" else null,
                 )

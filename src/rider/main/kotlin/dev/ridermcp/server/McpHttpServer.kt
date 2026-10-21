@@ -5,6 +5,7 @@ import dev.ridermcp.tools.BuildTools
 import dev.ridermcp.tools.CmdLineArgsTools
 import dev.ridermcp.tools.DebugWatchTools
 import dev.ridermcp.tools.DebuggerTools
+import dev.ridermcp.tools.DeviceTools
 import dev.ridermcp.tools.DiagnosticsTools
 import dev.ridermcp.tools.RunConfigTools
 import dev.ridermcp.tools.SolutionConfigTools
@@ -46,7 +47,7 @@ class McpHttpServer(private val port: Int) {
 
     private fun buildServer(): Server {
         val server = Server(
-            serverInfo = Implementation(name = "rider-mcp", version = "0.22.1"),
+            serverInfo = Implementation(name = "rider-mcp", version = "0.23.0"),
             options = ServerOptions(
                 capabilities = ServerCapabilities(
                     tools = ServerCapabilities.Tools(listChanged = true),
@@ -61,6 +62,7 @@ class McpHttpServer(private val port: Int) {
         RunConfigTools.register(server)
         CmdLineArgsTools.register(server)
         SolutionConfigTools.register(server)
+        DeviceTools.register(server)
         return server
     }
 

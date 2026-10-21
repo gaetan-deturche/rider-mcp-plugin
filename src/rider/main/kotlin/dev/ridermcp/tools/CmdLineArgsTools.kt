@@ -462,9 +462,16 @@ object CmdLineArgsTools {
     /** Rider C++ config -> the ACTIVE configuration|platform's launch parameters, reflectively. */
     private fun cppLaunchParameters(project: Project, config: Any): Any? {
         val active = SolutionConfigurationManager.tryGetInstance(project)?.activeConfigurationAndPlatform ?: return null
-        val platform = active.platform
         val parameters = config.javaClass.methods.firstOrNull { it.name == "getParameters" && it.parameterCount == 0 }
             ?.invoke(config) ?: return null
+        // The map is keyed by Rider's internal platform name; platform plugins translate the solution one.
+        val platform = runCatching {
+            val kind = parameters.javaClass.methods.first { it.name == "getProjectKind" && it.parameterCount == 0 }.invoke(parameters)
+            val info = Class.forName("com.jetbrains.rider.cpp.run.configurations.CppPlatformInfoProviderKt", true, config.javaClass.classLoader)
+                .methods.first { it.name == "getCppPlatformInfo" && it.parameterCount == 3 }
+                .invoke(null, active.configuration, active.platform, kind)
+            info.javaClass.getMethod("getName").invoke(info) as String
+        }.getOrNull() ?: active.platform
         val map = parameters.javaClass.methods.firstOrNull { it.name == "getParametersMap" && it.parameterCount == 0 }
             ?.invoke(parameters) ?: return null
         val getParams = map.javaClass.methods.firstOrNull {

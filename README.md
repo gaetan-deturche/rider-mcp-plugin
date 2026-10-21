@@ -51,7 +51,7 @@ when several solutions are open in one Rider instance.
 | Tool | Purpose |
 |------|---------|
 | `list_run_configurations` | Run/debug configurations in the solution (name + type) |
-| `run_configuration` | Launch a config by `name`, running its before-launch build first (exactly like clicking Run/Debug). `debug` defaults to `true` (debugger attaches); `debug=false` for a plain Run |
+| `run_configuration` | Launch a config by `name`, running its before-launch build first (exactly like clicking Run/Debug). `debug` defaults to `true` (debugger attaches); `debug=false` for a plain Run. Optional `configuration`/`platform`/`device` set and verify an explicit target; `restore` (default true) puts the user's ones back when the session ends |
 | `stop_process` | Stop running session(s) — the Stop button. Omit `name` to stop the single running one; `name` matches the Run/Debug tab title |
 
 **Solution configuration (`SolutionConfigTools.kt`)** — the toolbar "Development Editor | Win64" selector; for Unreal the build target is part of the configuration name:
@@ -60,6 +60,13 @@ when several solutions are open in one Rider instance.
 |------|---------|
 | `list_solution_configurations` | All `configuration \| platform` pairs, active one marked |
 | `set_solution_configuration` | Set the active pair by `configuration` (+ `platform` when ambiguous), case-insensitive |
+
+**Devices (`DeviceTools.kt`)** — the toolbar device selector next to the run configuration, for configurations whose type provides one (Rider's generic `DevicesProvider` API, any provider):
+
+| Tool | Purpose |
+|------|---------|
+| `list_devices` | Devices a configuration (`name`, default the selected one) can launch on, active one marked, unavailable ones with the reason |
+| `set_device` | Set the device by name (exact, else unique substring), read back; also `run_configuration(device=…)` |
 
 **Debugger — reads (`DebuggerTools.kt`)** — live XDebugger state; need a session **suspended at a breakpoint** (except `debug_status`):
 
@@ -222,8 +229,8 @@ attached (`softprops/action-gh-release`; the job grants `contents: write`).
 ```bash
 # bump pluginVersion in gradle.properties AND serverInfo in McpHttpServer.kt
 # (update README refs), commit, then:
-git tag v0.22.1
-git push origin v0.22.1      # CI builds and publishes the GitHub Release with the zip
+git tag v0.23.0
+git push origin v0.23.0      # CI builds and publishes the GitHub Release with the zip
 ```
 
 **Build on demand:** GitHub → *Actions → Build plugin → Run workflow*
@@ -234,7 +241,7 @@ permalink). A copy may also be committed under `dist/` for a version-pinned raw
 URL, e.g.:
 
 ```
-https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.22.1.zip
+https://raw.githubusercontent.com/gaetan-deturche/rider-mcp-plugin/main/dist/rider-mcp-plugin-0.23.0.zip
 ```
 
 ## Status / TODO
