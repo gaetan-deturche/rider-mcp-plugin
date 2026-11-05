@@ -63,7 +63,8 @@ namespace RiderMcp
         /// </summary>
         private BuildStartResult StartBuild(ISolution solution, BuildProjectParams request)
         {
-            IEnumerable<IProject> allProjects = solution.GetAllProjects();
+            // Solution folders can share a project's name (UE 5.8: a "Curiosity" folder above Curiosity.vcxproj) and can't be built.
+            IEnumerable<IProject> allProjects = solution.GetAllProjects().Where(p => !p.IsSolutionFolder());
 
             List<IProject> requested = new List<IProject>();
             foreach (string name in request.ProjectNames)
