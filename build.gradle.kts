@@ -66,6 +66,9 @@ dependencies {
         // pkg com.jetbrains.rider.projectView) out of the core intellij.rider.jar
         // into this product module — without it: Unresolved reference 'solution'.
         bundledModule("intellij.rider.rdclient.dotnet")
+        // 2026.3 moved the XDebugger API (com.intellij.xdebugger.*) and DefaultDebugExecutor, and its impl classes.
+        bundledModule("intellij.platform.debugger")
+        bundledModule("intellij.platform.debugger.impl")
     }
 
     // NB: we do NOT depend on project(":protocol") at runtime. rdgen emits the
@@ -79,23 +82,23 @@ dependencies {
     // runtime). SDK 0.13.0 targets Ktor 3.4.3 ≈ the platform's 3.4.1.
     implementation("io.modelcontextprotocol:kotlin-sdk:0.13.0")
 
-    // Embedded HTTP server for the Streamable HTTP MCP endpoint. Pinned to 3.4.1
-    // to match the Ktor that Rider 2026.1 bundles as platform library modules —
+    // Embedded HTTP server for the Streamable HTTP MCP endpoint. Pinned to 3.6.0
+    // to match the Ktor that Rider 2026.3 bundles as platform library modules —
     // the platform's copy is what loads at runtime, so our bytecode must target
     // the same version (3.0.x gave NoSuchMethodError on embeddedServer).
     // ktor-server-sse is still required: mcpStreamableHttp installs the SSE
     // plugin itself for the streaming half of the transport.
-    implementation("io.ktor:ktor-server-cio:3.4.1")
-    implementation("io.ktor:ktor-server-sse:3.4.1")
-    implementation("io.ktor:ktor-server-content-negotiation:3.4.1")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:3.4.1")
+    implementation("io.ktor:ktor-server-cio:3.6.0")
+    implementation("io.ktor:ktor-server-sse:3.6.0")
+    implementation("io.ktor:ktor-server-content-negotiation:3.6.0")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.6.0")
 }
 
 // Force every (incl. transitive, e.g. from the MCP SDK) io.ktor module to the
-// platform's 3.4.1 so there's a single, consistent Ktor on the classpath.
+// platform's 3.6.0 so there's a single, consistent Ktor on the classpath.
 configurations.all {
     resolutionStrategy.eachDependency {
-        if (requested.group == "io.ktor") useVersion("3.4.1")
+        if (requested.group == "io.ktor") useVersion("3.6.0")
     }
 }
 

@@ -6,6 +6,7 @@ import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.service
 import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectManager
 import com.jetbrains.rider.debugger.editAndContinue.DotNetHotReloadManager
 import com.jetbrains.rider.projectView.solution
 import dev.ridermcp.model.BuildProblem
@@ -38,7 +39,7 @@ object BuildTools {
                 "errors/warnings with file:line. If a hot-reload session is already running, it " +
                 "instead applies changes live (like the toolbar 'Apply Changes' button) unless " +
                 "rebuild=true — .NET Hot Reload for .NET runs, or Unreal Live Coding for a running " +
-                "UE editor. Use get_solution_projects to discover project names. A cold build runs in " +
+                "UE editor of this solution. Use get_solution_projects to discover project names. A cold build runs in " +
                 "the background: this returns a buildId immediately — poll build_status until it completes.",
             inputSchema = toolSchema(
                 properties = buildJsonObject {
@@ -77,6 +78,7 @@ object BuildTools {
             // cold build. Like that button, this applies all pending edits to the
             // running process(es), not just the named project. A `rebuild` forces a
             // full build, so it always takes the build route.
+            var skipNote: String? = null
             if (!rebuild) {
                 // .NET hot reload (run/debug session with hot reload).
                 val hotReload = runCatching { project.service<DotNetHotReloadManager>() }.getOrNull()
@@ -87,7 +89,9 @@ object BuildTools {
                 }
                 // Unreal: Live Coding is the hot-reload equivalent (a cold build is
                 // refused while it's active). Trigger it like Rider's UE build button.
-                tryUnrealHotReload(project)?.let { return@addTool text(it) }
+                val unreal = tryUnrealHotReload(project)
+                unreal?.reply?.let { return@addTool text(it) }
+                skipNote = unreal?.skipReason
             }
 
             // Cold build: kick it off and return a handle immediately — a build can
@@ -97,7 +101,8 @@ object BuildTools {
             if (start.buildId.isEmpty()) return@addTool text(start.errorMessage ?: "Build could not start.")
             val mode = if (rebuild) "rebuild" else "no live hot-reload session"
             text("[BUILD · started · $mode] buildId=${start.buildId} — building ${names.joinToString(", ")}. " +
-                "Poll build_status with this buildId (~every 3s) until it reports completed.")
+                "Poll build_status with this buildId (~every 3s) until it reports completed." +
+                (skipNote?.let { "\n$it" } ?: ""))
         }
 
         server.addTool(
@@ -169,24 +174,39 @@ object BuildTools {
      * Unreal projects don't use .NET hot reload — the equivalent is Live Coding,
      * driven from the running editor. Rider's UE build button (HotReloadBuildAction)
      * just does saveAll() + fires RdRiderModel.triggerHotReload; we do the same when
-     * a Live Coding session is available (UnrealHost.isHotReloadAvailable). Returns a
-     * status string when it fired, or null when the UE hot-reload path doesn't apply
-     * (not a UE project / no live session / UnrealLink absent) so the caller builds.
+     * a Live Coding session is available (UnrealHost.isHotReloadAvailable) on an
+     * editor this solution owns. Returns the reply when it fired, a skip reason when
+     * the connected editor belongs elsewhere, or null when the UE hot-reload path
+     * doesn't apply (not a UE project / no live session / UnrealLink absent); the
+     * caller cold-builds unless it fired.
      *
      * Done reflectively through the UnrealLink plugin's classloader so this plugin
      * keeps no hard dependency on UnrealLink and still loads on non-Unreal setups.
      */
-    private suspend fun tryUnrealHotReload(project: Project): String? {
+    private suspend fun tryUnrealHotReload(project: Project): UnrealLiveCoding? {
         return runCatching {
             val loader = PluginManagerCore.getPlugin(PluginId.getId("unreal-link"))?.pluginClassLoader
                 ?: return null
 
             val hostClass = loader.loadClass("com.jetbrains.rider.plugins.unreal.UnrealHost")
             val companion = hostClass.getField("Companion").get(null)
-            val host = companion.javaClass.methods.first { it.name == "getInstance" }.invoke(companion, project)
+            val hostOf = { p: Project -> companion.javaClass.methods.first { it.name == "getInstance" }.invoke(companion, p) }
+            val host = hostOf(project)
             val isUnreal = host.javaClass.methods.first { it.name == "isUnrealEngineSolution" }.invoke(host) as Boolean
             val available = host.javaClass.methods.first { it.name == "isHotReloadAvailable" }.invoke(host) as Boolean
             if (!isUnreal || !available) return null
+
+            // RiderLink names its port file after the .uproject only, so every open solution of
+            // the same game (Curiosity, Curiosity2) connects to whichever editor runs.
+            val pid = connectedEditorPid(host)
+                ?: return UnrealLiveCoding(skipReason = "Live Coding skipped: UnrealLink reports no editor process id.")
+            val exe = ProcessHandle.of(pid.toLong()).flatMap { it.info().command() }.orElse(null)
+            val others = ProjectManager.getInstance().openProjects.filter { it != project }
+            val owner = editorOwner(exe, others + project)
+            val foreign = if (owner != null) owner != project
+                else others.any { p -> runCatching { connectedEditorPid(hostOf(p)) }.getOrNull() == pid }
+            if (foreign) return UnrealLiveCoding(skipReason = "Live Coding skipped: the connected Unreal editor " +
+                "(pid $pid, ${exe ?: "?"}) belongs to ${owner?.basePath ?: "another open solution"}, not this solution.")
 
             withContext(Dispatchers.EDT) {
                 FileDocumentManager.getInstance().saveAllDocuments()
@@ -197,10 +217,26 @@ object BuildTools {
                 val signal = model.javaClass.methods.first { it.name == "getTriggerHotReload" }.invoke(model)
                 signal.javaClass.methods.first { it.name == "fire" && it.parameterCount == 1 }.invoke(signal, Unit)
             }
-            "[HOT RELOAD · Unreal Live Coding] Triggered a live patch on the running editor " +
-                "instead of a cold build — results appear in the editor's Live Coding tool window/log."
+            UnrealLiveCoding(reply = "[HOT RELOAD · Unreal Live Coding] Triggered a live patch on the running editor " +
+                "(pid $pid, ${exe ?: "?"}) instead of a cold build — results appear in the editor's Live Coding tool window/log.")
         }.getOrNull()
     }
+
+    private class UnrealLiveCoding(val reply: String? = null, val skipReason: String? = null)
+
+    private fun connectedEditorPid(host: Any): Int? {
+        val info = host.javaClass.methods.first { it.name == "getConnectionInfo" }.invoke(host) ?: return null
+        return info.javaClass.methods.first { it.name == "getProcessId" }.invoke(info) as Int
+    }
+
+    /** The open solution whose folder holds the editor executable (deepest match), or null. */
+    private fun editorOwner(exe: String?, projects: List<Project>): Project? {
+        val path = exe?.let(::normPath) ?: return null
+        return projects.filter { p -> p.basePath?.let { path.startsWith(normPath(it) + "/") } == true }
+            .maxByOrNull { it.basePath!!.length }
+    }
+
+    private fun normPath(path: String) = path.replace('\\', '/').trimEnd('/').lowercase()
 
     private fun format(r: BuildProjectResult): String {
         r.errorMessage?.let { return it }

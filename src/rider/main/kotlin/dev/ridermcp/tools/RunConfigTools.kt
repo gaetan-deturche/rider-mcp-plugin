@@ -2,6 +2,7 @@ package dev.ridermcp.tools
 
 import com.intellij.execution.ExecutionListener
 import com.intellij.execution.ExecutionManager
+import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.ExecutionTargetManager
 import com.intellij.execution.Executor
 import com.intellij.execution.ProgramRunnerUtil
@@ -12,6 +13,7 @@ import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.execution.impl.ExecutionManagerImpl
 import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.runners.ExecutionEnvironment
+import com.intellij.execution.runners.ExecutionEnvironmentBuilder
 import com.intellij.execution.runners.ProgramRunner
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
@@ -201,14 +203,22 @@ object RunConfigTools {
                 }
             }
 
-            // Rider resolves the execution target asynchronously (e.g. while the solution
-            // loads); launching before it can run fails in a balloon, so refuse here instead.
-            val targetReady = withTimeoutOrNull(TARGET_WAIT_MS) {
-                while (!ExecutionTargetManager.canRun(settings.configuration, ExecutionTargetManager.getActiveTarget(project))) delay(200)
-            } != null
-            if (!targetReady) return@addTool text(
-                "[$mode · not launched] \"$name\": execution target \"${ExecutionTargetManager.getActiveTarget(project).displayName}\" " +
-                    "can't run it (solution still loading, or no device selected) — retry, or check list_devices."
+            // The active target can be a placeholder that can't run this configuration (e.g. "<default>"
+            // while the solution loads, or on some solutions); findTarget falls back to one that can.
+            val targetManager = ExecutionTargetManager.getInstance(project)
+            val target: ExecutionTarget = withTimeoutOrNull(TARGET_WAIT_MS) {
+                var found: ExecutionTarget? = null
+                while (found == null) {
+                    found = targetManager.findTarget(settings.configuration)
+                        ?.takeIf { ExecutionTargetManager.canRun(settings.configuration, it) }
+                    if (found == null) delay(200)
+                }
+                found
+            } ?: return@addTool text(
+                "[$mode · not launched] \"$name\": no execution target can run it (active: \"" +
+                    "${targetManager.activeTarget.displayName}\", candidates: " +
+                    "${targetManager.getTargetsFor(settings.configuration).joinToString { "\"${it.displayName}\"" }.ifEmpty { "none" }}" +
+                    ") — solution still loading, or no device selected; retry, or check list_devices."
             )
 
             // Echo what is actually being launched, so a wrong target or stale args
@@ -243,7 +253,9 @@ object RunConfigTools {
             val ticket = if (debug) CrashTripwire.arm(project, name) else null
 
             withContext(Dispatchers.EDT) {
-                ProgramRunnerUtil.executeConfiguration(settings, executor)
+                // Same as ProgramRunnerUtil.executeConfiguration(settings, executor), but with the resolved target.
+                val env = ExecutionEnvironmentBuilder.create(executor, settings).target(target).build()
+                ProgramRunnerUtil.executeConfiguration(env, true, true)
             }
 
             // Non-debug launches don't arm a ticket and attach no debugger — report
